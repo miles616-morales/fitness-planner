@@ -1,0 +1,247 @@
+/* 健身周计划 · 移动端深色主题 */
+:root {
+  --bg: #0f1115;
+  --card: #171a21;
+  --card2: #1d212b;
+  --line: #2a2f3a;
+  --fg: #e8ecf2;
+  --dim: #8b93a3;
+  --acc: #5ee08a;
+  --acc-dim: rgba(94, 224, 138, .16);
+  --danger: #ff6b6b;
+  --radius: 16px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { background: var(--bg); color: var(--fg); height: 100%; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+}
+
+/* ---------- 页面骨架 ---------- */
+.screen { min-height: 100%; padding: 14px 16px calc(32px + env(safe-area-inset-bottom)); max-width: 560px; margin: 0 auto; }
+.dayview {
+  position: fixed; inset: 0; z-index: 5; overflow-y: auto; background: var(--bg);
+  transform: translateX(100%); transition: transform .28s cubic-bezier(.32,.72,.28,1);
+  -webkit-overflow-scrolling: touch;
+}
+.dayview.open { transform: none; }
+.day-inner { min-height: 100%; padding: 14px 16px calc(140px + env(safe-area-inset-bottom)); max-width: 560px; margin: 0 auto; }
+
+/* ---------- 顶栏 ---------- */
+.topbar { display: flex; align-items: center; gap: 12px; padding: 6px 0 14px; }
+.topbar > div:first-child { flex: 1; }
+.topbar h1 { font-size: 24px; font-weight: 700; letter-spacing: .5px; }
+.sub { color: var(--dim); font-size: 13px; margin-top: 3px; }
+.iconbtn {
+  width: 40px; height: 40px; border-radius: 12px; border: 1px solid var(--line);
+  background: var(--card); color: var(--fg); display: flex; align-items: center; justify-content: center;
+}
+.iconbtn svg { width: 22px; height: 22px; fill: none; stroke: var(--fg); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------- 今日卡片 ---------- */
+.todaycard { background: linear-gradient(135deg, #1b2430, var(--card)); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 20px; }
+.todaycard.rest { text-align: center; color: var(--dim); font-size: 14px; padding: 22px; }
+.tc-top { display: flex; justify-content: space-between; font-size: 13px; color: var(--dim); margin-bottom: 10px; }
+.tc-num { color: var(--acc); font-weight: 700; font-size: 15px; }
+.tc-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+.tc-ex { font-size: 12px; padding: 4px 10px; border-radius: 99px; background: var(--card2); color: var(--dim); transition: .2s; }
+.tc-ex.done { background: var(--acc-dim); color: var(--acc); }
+.bar { height: 7px; border-radius: 99px; background: var(--card2); overflow: hidden; }
+.bar-in { height: 100%; border-radius: 99px; background: var(--acc); transition: width .35s; min-width: 0; }
+
+/* ---------- 周列表 ---------- */
+.sec-title { font-size: 13px; color: var(--dim); margin: 4px 2px 10px; letter-spacing: 1px; }
+.weeklist { display: flex; flex-direction: column; gap: 9px; }
+.dayrow {
+  display: flex; align-items: center; gap: 12px; background: var(--card);
+  border: 1px solid var(--line); border-radius: 14px; padding: 13px 14px; cursor: pointer;
+}
+.dayrow:active { background: var(--card2); }
+.dayrow.today { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc); }
+.dayname { font-size: 16px; font-weight: 600; min-width: 44px; }
+.dayname em { font-style: normal; font-size: 10px; color: var(--acc); background: var(--acc-dim); border-radius: 5px; padding: 2px 5px; margin-left: 6px; vertical-align: 2px; }
+.daymid { flex: 1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.daycount { font-size: 13px; color: var(--dim); }
+.cattags { display: inline-flex; gap: 4px; }
+.cattags i { font-style: normal; font-size: 10px; color: var(--dim); border: 1px solid var(--line); border-radius: 5px; padding: 1.5px 6px; }
+.rest-tag { font-size: 12px; color: var(--dim); background: var(--card2); padding: 3px 10px; border-radius: 99px; }
+.chev { width: 16px; height: 16px; fill: none; stroke: var(--dim); stroke-width: 2; stroke-linecap: round; }
+
+/* ---------- 动作列表 ---------- */
+.progcard { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 14px; }
+.exlist { display: flex; flex-direction: column; gap: 10px; }
+.exrow { display: flex; gap: 12px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px; cursor: pointer; }
+.exrow:active { background: var(--card2); }
+.figbox { flex-shrink: 0; background: #131720; border-radius: 12px; padding: 4px; }
+.figbox.sm { padding: 2px; }
+.exinfo { flex: 1; min-width: 0; }
+.exname { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.exmeta { font-size: 13px; color: var(--dim); margin-top: 3px; }
+.exnote { font-size: 12px; color: var(--dim); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.catchip { font-size: 10px; font-weight: 400; color: var(--acc); background: var(--acc-dim); padding: 2px 7px; border-radius: 5px; }
+.dots { display: flex; gap: 6px; margin-top: 9px; flex-wrap: wrap; }
+.dot { width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid var(--line); background: transparent; }
+.dot.on { background: var(--acc); border-color: var(--acc); }
+.emptyday { text-align: center; padding: 48px 0 24px; }
+.emptyday p { margin-top: 12px; font-size: 16px; }
+.emptyday .dim { font-size: 13px; color: var(--dim); }
+.emptyfig { display: flex; justify-content: center; opacity: .6; }
+
+.addbtn-wrap { position: sticky; bottom: 0; padding: 18px 0 0; }
+.bigbtn {
+  width: 100%; border: none; border-radius: 14px; padding: 15px; font-size: 16px; font-weight: 600;
+  background: var(--acc); color: #08210f; cursor: pointer;
+}
+.bigbtn:active { filter: brightness(.88); }
+.bigbtn.ghost { background: var(--card2); color: var(--fg); border: 1px solid var(--line); }
+.bigbtn.danger { background: transparent; color: var(--danger); border: 1px solid rgba(255,107,107,.35); }
+.bigbtn.wide { margin-top: 10px; }
+.btnrow { display: flex; gap: 10px; margin-top: 14px; }
+
+/* ---------- 弹层 ---------- */
+.mask { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 40; opacity: 0; pointer-events: none; transition: opacity .25s; }
+.mask.open { opacity: 1; pointer-events: auto; }
+.sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+  max-height: 88vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  background: var(--card2); border-radius: 22px 22px 0 0;
+  transform: translateY(105%); transition: transform .3s cubic-bezier(.32,.72,.28,1);
+  padding: 10px 18px calc(26px + env(safe-area-inset-bottom));
+}
+.sheet.open { transform: none; }
+.sheet::before { content: ''; display: block; width: 38px; height: 4px; border-radius: 99px; background: var(--line); margin: 4px auto 14px; }
+.sheet-title { font-size: 19px; font-weight: 700; }
+.sheet-head { display: flex; align-items: center; margin: 10px 0 2px; }
+.sheet-fig { display: flex; justify-content: center; padding: 6px 0; }
+.sheet-fig.sm { padding: 0; margin-top: 8px; }
+.desc { font-size: 13.5px; color: var(--dim); line-height: 1.7; margin: 8px 0 4px; }
+.exmeta2 { font-size: 13px; color: var(--dim); margin: 12px 0 8px; }
+.notecard { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 13px; margin: 10px 0; }
+.notecard b { color: var(--dim); font-weight: 400; margin-right: 8px; }
+.bigdots { display: flex; gap: 10px; flex-wrap: wrap; margin: 6px 0 4px; }
+.bigdot {
+  width: 42px; height: 42px; border-radius: 50%; border: 1.5px solid var(--line);
+  background: transparent; color: var(--dim); font-size: 15px; font-style: normal; font-weight: 600;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+}
+.bigdot.on { background: var(--acc); border-color: var(--acc); color: #08210f; }
+
+/* ---------- 动作库 ---------- */
+.liblist { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.librow { display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 8px 12px; cursor: pointer; }
+.librow:active { background: #20242f; }
+.libname { font-size: 15px; font-weight: 600; }
+.librow .sub { margin-top: 2px; max-width: 200px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.librow .chev { margin-left: auto; }
+.plusfig { width: 54px; height: 54px; flex-shrink: 0; border-radius: 12px; background: var(--card2); border: 1px dashed var(--line); color: var(--acc); font-size: 24px; display: flex; align-items: center; justify-content: center; }
+.customrow { border-style: dashed; }
+
+/* ---------- 表单 ---------- */
+.flabel { display: block; font-size: 13px; color: var(--dim); margin: 16px 2px 8px; }
+.finput {
+  width: 100%; background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+  color: var(--fg); font-size: 16px; padding: 13px 14px; outline: none; font-family: inherit;
+}
+.finput:focus { border-color: var(--acc); }
+.finput.area { resize: none; line-height: 1.6; }
+.rowline { display: flex; gap: 10px; align-items: stretch; }
+.finput.num { width: 110px; text-align: center; }
+.stepper { display: flex; align-items: center; gap: 18px; justify-content: center; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 8px 0; }
+.stepper button { width: 46px; height: 40px; border: none; border-radius: 10px; background: var(--card2); color: var(--fg); font-size: 20px; }
+.stepper b { font-size: 20px; min-width: 40px; text-align: center; }
+.seg { flex: 1; display: flex; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 3px; gap: 3px; }
+.seg button { flex: 1; border: none; border-radius: 9px; background: transparent; color: var(--dim); font-size: 14px; padding: 10px 0; }
+.seg button.on { background: var(--acc); color: #08210f; font-weight: 700; }
+
+/* ---------- 设置 ---------- */
+.setcard { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; font-size: 14px; margin-top: 14px; }
+.setcard .dim { font-size: 12.5px; margin-top: 5px; line-height: 1.7; }
+.setcard.small { font-size: 12px; color: var(--dim); text-align: center; }
+
+/* ---------- 3D 演示画布 ---------- */
+.fig { display: block; }
+.figbox { background: #131720; }
+.figbox .fig { border-radius: 10px; }
+
+/* ---------- 日型标签 ---------- */
+.typechip { font-size: 11px; font-weight: 600; padding: 3px 8px; border-radius: 6px; flex-shrink: 0; }
+.tp-strength { color: #7fa9ff; background: rgba(91, 141, 239, .16); }
+.tp-speed { color: #ffd479; background: rgba(247, 185, 85, .14); }
+.tp-recovery { color: #6ee0d8; background: rgba(78, 205, 196, .13); }
+.tp-rest { color: #8b93a3; background: var(--card2); }
+
+/* ---------- 理念卡 ---------- */
+.ideacard { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 13px 15px; margin-bottom: 20px; font-size: 13.5px; }
+.ideacard summary { cursor: pointer; font-weight: 600; color: var(--fg); list-style: none; }
+.ideacard summary::before { content: '▾ '; color: var(--acc); }
+.ideacard[open] summary::before { content: '▴ '; }
+.ideacard p { color: var(--dim); line-height: 1.75; margin-top: 10px; font-size: 12.5px; }
+.ideacard b { color: var(--fg); display: block; margin-bottom: 2px; }
+
+/* ---------- 热身卡 ---------- */
+.warmcard { display: flex; align-items: center; gap: 12px; background: linear-gradient(135deg, #2a2018, var(--card)); border: 1px solid #4a3826; border-radius: var(--radius); padding: 13px 15px; margin-bottom: 12px; cursor: pointer; }
+.warmcard.alldone { border-color: var(--acc); }
+.warmicon { font-size: 22px; }
+.warmmid { flex: 1; }
+.warmmid b { font-size: 15px; display: block; }
+.warmmid span { font-size: 12px; color: var(--dim); display: block; margin-top: 2px; }
+
+/* ---------- 热身列表 ---------- */
+.warmlist { display: flex; flex-direction: column; gap: 8px; margin: 12px 0 4px; }
+.warmrow { display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 8px 12px; cursor: pointer; }
+.warmrow.done { border-color: rgba(94, 224, 138, .4); }
+.warmrow .wm { flex: 1; min-width: 0; }
+.warmrow .sub { margin-top: 3px; font-size: 11.5px; max-width: 210px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.warmrow .libname { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+
+/* ---------- 恢复日 ---------- */
+.recnote { background: rgba(78, 205, 196, .08); border: 1px solid rgba(78, 205, 196, .25); color: #9adfd8; font-size: 12.5px; line-height: 1.7; border-radius: 12px; padding: 11px 14px; margin-bottom: 12px; }
+.checklist { display: flex; flex-direction: column; gap: 8px; }
+.checkrow { display: flex; align-items: flex-start; gap: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; cursor: pointer; }
+.checkrow:active { background: var(--card2); }
+.checkrow .sub { margin-top: 3px; line-height: 1.6; }
+.linktag { color: var(--acc); font-size: 11.5px; }
+.dot.big { width: 22px; height: 22px; margin-top: 2px; }
+.progcard.slim { padding: 11px 14px; margin: 10px 0 4px; }
+
+/* ---------- 动作行附加元素 ---------- */
+.exfoot { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.goalchip { font-size: 10px; color: #ffd479; background: rgba(247, 185, 85, .12); padding: 2px 7px; border-radius: 5px; }
+.loadtag { font-size: 11px; color: var(--dim); background: var(--card2); padding: 3px 8px; border-radius: 6px; }
+.altchip { font-size: 11px; color: #7fa9ff; background: rgba(91, 141, 239, .14); padding: 3px 8px; border-radius: 6px; cursor: pointer; }
+
+/* ---------- 详情弹层 ---------- */
+.orbothint { text-align: center; font-size: 11.5px; color: var(--dim); margin-top: 4px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.metachip { font-size: 12px; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; }
+.altcard { background: var(--card); border: 1px dashed #3a4660; border-radius: 12px; padding: 12px; font-size: 13px; color: var(--dim); margin-top: 12px; }
+.altcard .slimbtn { margin-top: 10px; width: 100%; }
+.bigbtn.slimbtn { width: auto; padding: 10px 14px; font-size: 13px; }
+.bigbtn.slimbtn.on { background: var(--acc); color: #08210f; border: none; }
+
+/* ---------- 动作库分组 ---------- */
+.libgroup { font-size: 12px; color: var(--dim); margin: 14px 2px 8px; letter-spacing: 1px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.rowline.note2 { gap: 8px; margin-top: 8px; align-items: center; }
+.stepper.wide { margin-top: 2px; }
+.small { font-size: 11.5px; }
+p.dim.small { margin: 10px 2px; line-height: 1.6; }
+
+/* ---------- 顶部提示条 ---------- */
+.tipbar {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 60;
+  background: #1d2b22; color: #c9f0d5; font-size: 13px; line-height: 1.5;
+  padding: calc(10px + env(safe-area-inset-top)) 40px 10px 16px;
+}
+.tipbar b { position: absolute; right: 14px; top: calc(12px + env(safe-area-inset-top)); color: var(--acc); font-size: 12px; }
+
+/* ---------- Toast ---------- */
+#toast {
+  position: fixed; left: 50%; bottom: 90px; transform: translateX(-50%) translateY(16px);
+  background: #262c38; color: var(--fg); font-size: 13.5px;
+  padding: 10px 18px; border-radius: 99px; z-index: 70;
+  opacity: 0; pointer-events: none; transition: all .25s; white-space: nowrap;
+  box-shadow: 0 6px 24px rgba(0,0,0,.4);
+}
+#toast.show { opacity: 1; transform: translateX(-50%); }
