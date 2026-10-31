@@ -11,8 +11,200 @@ const fmtDate = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2
 const todayStr = () => fmtDate(new Date());
 const todayIdx = () => (new Date().getDay() + 6) % 7;
 const fmtRest = s => { if (!s) return ''; if (s >= 120) { const m = s / 60; return (m % 1 ? m.toFixed(1) : m) + '分钟'; } return s + '秒'; };
+const toSec = (n, unit) => unit === '分钟' ? n * 60 : (unit === '小时' ? n * 3600 : n);
+const fmtTime = s => { s = Math.max(0, Math.round(s)); const m = Math.floor(s / 60), ss = s % 60; return (m < 10 ? '' + m : m) + ':' + String(ss).padStart(2, '0'); };
+const fmtPre = n => (n >= 60 && n % 60 === 0) ? (n / 60) + '分' : n + 's';
 const LIB = (typeof Fig3D !== 'undefined') ? Fig3D.LIB : {};
 const fig = (key, size, live) => Fig3D.make(key, size, live);
+
+/* ================= 提示音 ================= */
+let actx = null;
+function beep(f, d) {
+  f = f || 880; d = d || .18;
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = 'sine'; o.frequency.value = f;
+    g.gain.setValueAtTime(.001, actx.currentTime);
+    g.gain.exponentialRampToValueAtTime(.35, actx.currentTime + .03);
+    g.gain.exponentialRampToValueAtTime(.001, actx.currentTime + d);
+    o.connect(g); g.connect(actx.destination);
+    o.start(); o.stop(actx.currentTime + d);
+  } catch (e) { /* 无音频环境则静默 */ }
+}
+
+/* ================= 计时器预设 ================= */
+const PRESETS_KEY = 'fit-timer-presets';
+const DEF_PRESETS = [10, 15, 20, 30, 60, 90, 120];
+function getPresets() {
+  try { const p = JSON.parse(localStorage.getItem(PRESETS_KEY)); if (Array.isArray(p) && p.length) return p; } catch (e) {}
+  return DEF_PRESETS.slice();
+}
+function savePresets(p) { localStorage.setItem(PRESETS_KEY, JSON.stringify(p)); }
+
+/* ================= 自由计时器（每个动作卡片内一个） ================= */
+const freeT = {};   // uid -> {mode, running, remain, total, since, end}
+const openFrees = new Set();
+const editingFrees = new Set();
+
+function freeTimerTick(now) {
+  for (const k in freeT) {
+    const t = freeT[k];
+    if (!t.running) continue;
+    if (t.mode === 'countdown') {
+      t.remain = Math.max(0, (t.end - now) / 1000);
+      if (now >= t.end) { t.running = false; t.remain = 0; beep(660, .25); }
+    } else {
+      t.remain = (now - t.since) / 1000;
+    }
+    const box = $('.freet[data-uid="' + k + '"] #ftTime');
+    if (box) box.textContent = fmtTime(t.mode === 'stop' ? t.remain : t.remain);
+  }
+}
+
+/* ================= 组内计时（全屏覆盖层） ================= */
+let timerOv = null;   // {ex, setIdx, phase, total, remain, end}
+let chooseN = 0, chooseLo = 0, chooseHi = 0;
+
+function showTimerOv() {
+  if (!$('#timerOvRoot')) {
+    const n = el('div', 'timerov', '<div class="tov-inner" id="tovInner"></div>');
+    n.id = 'timerOvRoot';
+    document.body.appendChild(n);
+  }
+}
+function closeTimerOv() {
+  const n = $('#timerOvRoot'); if (n) n.remove();
+  timerOv = null; ensureTick();
+}
+function buildTov() {
+  const ex = timerOv.ex, si = timerOv.setIdx;
+  const title = esc(ex.name) + ' · 第' + (si + 1) + '组 <span style="color:var(--dim);font-size:13px">/ 共' + ex.sets + '组</span>';
+  let inner = '';
+  if (timerOv.phase === 'choose') {
+    inner = '<div class="tov-title">' + title + '</div>' +
+      '<div class="tov-phase ph-action">动作倒计时 · 选择时长</div>' +
+      '<div class="choose-row"><button id="tovMin">−</button><div class="cval"><b id="tovNum">' + chooseN + '</b><span>秒</span></div><button id="tovPlus">＋</button></div>' +
+      '<div class="tov-sub">第' + (si + 1) + '组时长范围 ' + chooseLo + '~' + chooseHi + ' 秒，倒计时结束后自动打卡</div>' +
+      '<div class="tov-btns"><button class="bigbtn" id="tovStart">开始这组</button><button class="bigbtn ghost" id="tovCancel">取消</button></div>';
+  } else if (timerOv.phase === 'action') {
+    inner = '<div class="tov-title">' + title + '</div>' +
+      '<div class="tov-phase ph-action">动作倒计时</div>' +
+      '<div class="tov-num" id="tovNum">' + fmtTime(timerOv.remain) + '</div>' +
+      '<div class="tov-bar"><i id="tovBar"></i></div>' +
+      '<div class="tov-btns"><button class="bigbtn ghost" id="tovSkip">跳过</button><button class="bigbtn ghost" id="tovCancel">取消</button></div>';
+  } else if (timerOv.phase === 'rest') {
+    inner = '<div class="tov-title">' + title + '</div>' +
+      '<div class="tov-phase ph-rest">间歇倒计时</div>' +
+      '<div class="tov-num" id="tovNum">' + fmtTime(timerOv.remain) + '</div>' +
+      '<div class="tov-bar"><i id="tovBar"></i></div>' +
+      '<div class="tov-btns"><button class="bigbtn" id="tovDone">提前结束</button><button class="bigbtn ghost" id="tovCancel">取消</button></div>';
+  } else if (timerOv.phase === 'reps') {
+    inner = '<div class="tov-title">' + title + '</div>' +
+      '<div class="tov-phase ph-reps">已打卡 ✓</div>' +
+      '<div class="tov-num reps" id="tovNum">本组 ' + esc(ex.num) + (ex.numMax ? '~' + ex.numMax : '') + ' ' + esc(ex.unit) + '</div>' +
+      (ex.rest ? '<div class="tov-sub">完成后开始组间休息</div><div class="tov-btns"><button class="bigbtn" id="tovRest">开始间歇 ' + fmtRest(ex.rest) + '</button><button class="bigbtn ghost" id="tovCancel">关闭</button></div>'
+               : '<div class="tov-btns"><button class="bigbtn" id="tovCancel">完成</button></div>');
+  } else if (timerOv.phase === 'done') {
+    inner = '<div class="tov-title">' + title + '</div>' +
+      '<div class="tov-phase ph-done">✓ 本组完成</div>' +
+      '<div class="tov-num reps" id="tovNum">' + esc(ex.name) + '</div>' +
+      '<div class="tov-sub">已完成第 ' + (si + 1) + ' 组，点击下一组继续</div>' +
+      '<div class="tov-btns"><button class="bigbtn" id="tovCancel">好</button></div>';
+  }
+  $('#tovInner').innerHTML = inner;
+}
+function updateTovNumbers() {
+  const n = $('#tovNum'); if (n && timerOv.phase !== 'choose') n.textContent = fmtTime(timerOv.remain);
+  const b = $('#tovBar'); if (b) b.style.width = Math.round((1 - timerOv.remain / timerOv.total) * 100) + '%';
+}
+
+function startActionTimer(ex, setIdx, sec) {
+  timerOv = { ex, setIdx, phase: 'action', total: sec, remain: sec, end: Date.now() + sec * 1000 };
+  showTimerOv(); buildTov(); wireTov(); ensureTick();
+}
+function startRestTimer(ex, setIdx, sec) {
+  timerOv = { ex, setIdx, phase: 'rest', total: sec, remain: sec, end: Date.now() + sec * 1000 };
+  buildTov(); wireTov(); ensureTick();
+}
+function startChooseTimer(ex, setIdx, lo, hi) {
+  chooseLo = lo; chooseHi = hi; chooseN = lo;
+  timerOv = { ex, setIdx, phase: 'choose', total: hi, remain: hi, end: 0 };
+  showTimerOv(); buildTov(); wireTov();
+}
+function startRepsBox(ex, setIdx) {
+  timerOv = { ex, setIdx, phase: 'reps', total: 0, remain: 0, end: 0 };
+  showTimerOv(); buildTov(); wireTov();
+}
+
+function wireTov() {
+  const g = id => $('#tovInner').querySelector(id);
+  const c = g('#tovCancel'); if (c) c.addEventListener('click', closeTimerOv);
+  const s = g('#tovStart'); if (s) s.addEventListener('click', () => { startActionTimer(timerOv.ex, timerOv.setIdx, chooseN); });
+  const m = g('#tovMin'); if (m) m.addEventListener('click', () => { if (chooseN > chooseLo) chooseN--; g('#tovNum').textContent = chooseN; });
+  const p = g('#tovPlus'); if (p) p.addEventListener('click', () => { if (chooseN < chooseHi) chooseN++; g('#tovNum').textContent = chooseN; });
+  const sk = g('#tovSkip'); if (sk) sk.addEventListener('click', () => timerPhaseDone());
+  const dn = g('#tovDone'); if (dn) dn.addEventListener('click', () => { beep(); timerOv = { ex: timerOv.ex, setIdx: timerOv.setIdx, phase: 'done', total: 1, remain: 0, end: 0 }; buildTov(); wireTov(); });
+  const r = g('#tovRest'); if (r) r.addEventListener('click', () => startRestTimer(timerOv.ex, timerOv.setIdx, timerOv.ex.rest));
+}
+
+function timerPhaseDone() {
+  if (!timerOv) return;
+  const { ex, setIdx, phase } = timerOv;
+  if (phase === 'action') {
+    const arr = getLogArr(ex.uid, ex.sets);
+    if (!arr[setIdx]) { arr[setIdx] = true; save(); }
+    renderDay(); renderHome(); refreshSheetDots(ex);
+    beep(980, .25);
+    if (ex.rest > 0) { startRestTimer(ex, setIdx, ex.rest); }
+    else { timerOv = { ex, setIdx, phase: 'done', total: 1, remain: 0, end: 0 }; buildTov(); wireTov(); }
+  } else if (phase === 'rest') {
+    beep(660, .3); beep(880, .3);
+    timerOv = { ex, setIdx, phase: 'done', total: 1, remain: 0, end: 0 }; buildTov(); wireTov();
+  }
+}
+
+/* ================= 全局计时 tick ================= */
+let timerInt = null;
+function haveTimers() { return !!timerOv || Object.values(freeT).some(t => t.running); }
+function ensureTick() {
+  if (!timerInt && haveTimers()) timerInt = setInterval(() => {
+    const now = Date.now();
+    if (timerOv) {
+      if (timerOv.phase === 'action' || timerOv.phase === 'rest') {
+        timerOv.remain = Math.max(0, (timerOv.end - now) / 1000);
+        if (timerOv.remain <= 0) timerPhaseDone();
+        else updateTovNumbers();
+      }
+    }
+    freeTimerTick(now);
+    if (!haveTimers() && !timerOv) { clearInterval(timerInt); timerInt = null; }
+  }, 200);
+}
+
+/* 打卡状态变化后，同步刷新详情弹层里的打卡圆点 */
+function refreshSheetDots(ex) {
+  if (!sheet.classList.contains('open')) return;
+  const arr = getLogArr(ex.uid, ex.sets);
+  sheet.querySelectorAll('.bigdot').forEach(d => d.classList.toggle('on', !!arr[+d.dataset.si]));
+}
+
+/* ================= 打卡流程 ================= */
+function onSetTap(ex, setIdx) {
+  const arr = getLogArr(ex.uid, ex.sets);
+  if (arr[setIdx]) { arr[setIdx] = false; save(); renderDay(); renderHome(); refreshSheetDots(ex); return; }
+  const timeBased = ex.unit === '秒' || ex.unit === '分钟' || ex.unit === '小时';
+  if (timeBased) {
+    const lo = toSec(ex.num, ex.unit), hi = ex.numMax ? toSec(ex.numMax, ex.unit) : lo;
+    if (hi > lo) startChooseTimer(ex, setIdx, lo, hi);
+    else startActionTimer(ex, setIdx, lo);
+  } else {
+    if (!arr[setIdx]) { arr[setIdx] = true; save(); }
+    renderDay(); renderHome(); refreshSheetDots(ex);
+    startRepsBox(ex, setIdx);
+  }
+}
 
 /* ================= 数据结构 ================= */
 const DAYTYPES = {
@@ -22,7 +214,6 @@ const DAYTYPES = {
   rest: { label: '休息', cls: 'tp-rest' },
 };
 
-/* 恢复日清单（周三 / 周六共用） */
 const RECOVERY_ITEMS = [
   { uid: 'rc1', name: '泡沫轴滚动', desc: '针对训练部位滚动，遇到酸痛点停留 20~30 秒' },
   { uid: 'rc2', name: '动态拉伸流程', desc: '完成热身流程 8 个动作，充分活动关节', link: 'warmup' },
@@ -32,10 +223,9 @@ const RECOVERY_ITEMS = [
   { uid: 'rc6', name: '呼吸 / 冥想 10 分钟', desc: '午后在安静处专注呼吸或听冥想音频，帮助神经系统降频' },
 ];
 
-/* 训练前动态拉伸（原计划第9个动作待回看视频补充） */
 const WARMUP_KEYS = ['wristrock', 'catcow', 'hkneelrot', 'butterfly', 'hip9090', 'rot9090', 'hamstretch', 'sofastretch'];
 
-/* ================= 默认计划（大海运动表现 · 下半年周计划） ================= */
+/* ================= 默认计划 ================= */
 function ex(lib, o) {
   const L = LIB[lib] || { name: '自定义', cat: '自定义', desc: '' };
   return Object.assign({ uid: uid(), lib, name: L.name, sets: 3, num: 10, numMax: 0, unit: '个',
@@ -89,7 +279,7 @@ function load() {
   try {
     const s = JSON.parse(localStorage.getItem(KEY));
     if (s && Array.isArray(s.plan) && s.plan.length === 7) return { plan: s.plan, log: s.log || {} };
-  } catch (e) { /* 数据损坏则重建 */ }
+  } catch (e) {}
   return { plan: defaultPlan(), log: {} };
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { toast('保存失败：存储空间不足'); } }
@@ -100,8 +290,6 @@ function pruneLog() {
     if (isNaN(t) || t < cutoff) delete state.log[d];
   }
 }
-
-/* 打卡记录 */
 function getLogArr(key, sets) {
   const day = state.log[todayStr()] || (state.log[todayStr()] = {});
   if (!Array.isArray(day[key]) || day[key].length !== sets) day[key] = new Array(sets).fill(false);
@@ -109,7 +297,6 @@ function getLogArr(key, sets) {
 }
 function toggle(key, sets, i) { const arr = getLogArr(key, sets); arr[i] = !arr[i]; save(); }
 function isDone(key, sets) { return sets > 0 && getLogArr(key, sets).every(Boolean); }
-
 function warmupDone() { return WARMUP_KEYS.filter(k => isDone('warm-' + k, 1)).length; }
 function recoveryDone() { return RECOVERY_ITEMS.filter(it => isDone(it.uid, 1)).length; }
 
@@ -188,7 +375,7 @@ function renderHome() {
 
 /* ---------- 日视图 ---------- */
 let curDay = 0;
-function openDay(i) { curDay = i; renderDay(); $('#day').classList.add('open'); }
+function openDay(i) { curDay = i; openFrees.clear(); renderDay(); $('#day').classList.add('open'); }
 function closeDay() { $('#day').classList.remove('open'); }
 
 function exMeta(e) {
@@ -197,6 +384,109 @@ function exMeta(e) {
   s += (e.numMax ? e.num + '~' + e.numMax : e.num) + ' ' + e.unit;
   if (e.rest) s += ' · 间歇 ' + fmtRest(e.rest);
   return s;
+}
+
+/* ---------- 长按拖拽排序动作 ---------- */
+let suppressClick = false;
+function initRowSort(listEl, day) {
+  let drag = null, pressTimer = null;
+
+  function onMove(e) {
+    if (!drag) return;
+    const dy = e.clientY - drag.y0;
+    drag.row.style.transform = 'translateY(' + dy + 'px) scale(1.02)';
+    const c = drag.rects[drag.s].top + drag.dragH / 2 + dy;
+    let t = drag.s;
+    drag.wraps.forEach((w, i) => {
+      if (i === drag.s) return;
+      const ci = drag.rects[i].top + drag.rects[i].height / 2;
+      if (i > drag.s && c > ci) t++;
+      if (i < drag.s && c < ci) t--;
+    });
+    t = Math.max(0, Math.min(drag.wraps.length - 1, t));
+    if (t !== drag.t) {
+      drag.t = t;
+      const { s, wraps, dragH, gap } = drag;
+      wraps.forEach((w, i) => {
+        if (i === s) return;
+        let sh = 0;
+        if (s < i && i <= t) sh = -(dragH + gap);
+        else if (t <= i && i < s) sh = (dragH + gap);
+        w.style.transform = sh ? 'translateY(' + sh + 'px)' : '';
+      });
+    }
+  }
+
+  function finish(e, commit) {
+    if (!drag) return;
+    const d = drag; drag = null;
+    document.removeEventListener('touchmove', d.blocker);
+    d.row.removeEventListener('pointermove', onMove);
+    d.row.removeEventListener('pointerup', onUp);
+    d.row.removeEventListener('pointercancel', onCancel);
+    const t = commit ? d.t : d.s;
+    let slot = d.rects[d.s].top;
+    if (t > d.s) for (let i = d.s + 1; i <= t; i++) slot += d.rects[i].height + d.gap;
+    else if (t < d.s) for (let i = d.s; i > t; i--) slot -= d.rects[i].height + d.gap;
+    d.row.style.transition = 'transform .18s ease';
+    d.row.style.transform = 'translateY(' + Math.round(slot - d.rects[d.s].top) + 'px) scale(1)';
+    setTimeout(() => {
+      d.wraps.forEach(w => { w.style.transform = ''; w.style.transition = ''; w.classList.remove('dragging'); });
+      listEl.classList.remove('sorting');
+      if (t !== d.s) {
+        const arr = state.plan[curDay].ex;
+        const [moved] = arr.splice(d.s, 1);
+        arr.splice(t, 0, moved);
+        save();
+        toast('「' + moved.name + '」已移到第 ' + (t + 1) + ' 位');
+      }
+      renderDay(); renderHome();
+    }, 190);
+  }
+  function onUp(e) { finish(e, true); }
+  function onCancel() { finish(null, false); }
+
+  listEl.addEventListener('pointerdown', e => {
+    if (drag) return;
+    if (e.target.closest('.dot, .tbtn, .altchip, .freet, button')) return;
+    const row = e.target.closest('.exwrap');
+    if (!row || day.ex.length < 2) return;
+    const s = +row.dataset.idx;
+    const x0 = e.clientX, y0 = e.clientY;
+    let alive = true;
+    const mv = ev => { if (Math.hypot(ev.clientX - x0, ev.clientY - y0) > 12) cancel(); };
+    const pu = () => cancel();
+    const cancel = () => {
+      alive = false;
+      window.removeEventListener('pointermove', mv);
+      window.removeEventListener('pointerup', pu);
+    };
+    window.addEventListener('pointermove', mv);
+    window.addEventListener('pointerup', pu);
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => {
+      window.removeEventListener('pointermove', mv);
+      window.removeEventListener('pointerup', pu);
+      if (!alive || drag) return;
+      suppressClick = true;
+      setTimeout(() => { suppressClick = false; }, 450);
+      const wraps = Array.from(listEl.querySelectorAll('.exwrap'));
+      const rects = wraps.map(w => w.getBoundingClientRect());
+      let gap = 8;
+      for (let i = 1; i < rects.length; i++) { const g = rects[i].top - rects[i - 1].bottom; if (g > 0 && g < 40 && g < gap) gap = g; }
+      drag = { row, wraps, rects, s, t: s, dragH: rects[s].height, gap, y0: e.clientY };
+      drag.blocker = ev => ev.preventDefault();
+      document.addEventListener('touchmove', drag.blocker, { passive: false });
+      listEl.classList.add('sorting');
+      row.classList.add('dragging');
+      row.style.transform = 'translateY(0px) scale(1.02)';
+      try { row.setPointerCapture(e.pointerId); } catch (err) {}
+      row.addEventListener('pointermove', onMove);
+      row.addEventListener('pointerup', onUp);
+      row.addEventListener('pointercancel', onCancel);
+      if (navigator.vibrate) { try { navigator.vibrate(12); } catch (err) {} }
+    }, 380);
+  });
 }
 
 function renderDay() {
@@ -220,17 +510,26 @@ function renderDay() {
     let listHtml = '';
     day.ex.forEach((e, idx) => {
       const arr = getLogArr(e.uid, e.sets);
-      const dots = arr.map((d, si) => '<i class="dot' + (d ? ' on' : '') + '" data-si="' + si + '"></i>').join('');
+      const done = arr.filter(Boolean).length;
       const lib = LIB[e.lib];
+      const running = freeT[e.uid] && freeT[e.uid].running;
       listHtml +=
-        '<div class="exrow" data-idx="' + idx + '">' +
-          '<div class="figbox" data-fig="' + esc(e.lib || 'custom') + '"></div>' +
-          '<div class="exinfo">' +
-            '<div class="exname">' + esc(e.name) + (lib ? '<span class="catchip">' + esc(lib.cat) + '</span>' : '') + (e.goal ? '<span class="goalchip">' + esc(e.goal) + '</span>' : '') + '</div>' +
-            '<div class="exmeta">' + exMeta(e) + '</div>' +
-            (e.note ? '<div class="exnote">' + esc(e.note) + '</div>' : '') +
-            '<div class="exfoot">' + (e.load ? '<span class="loadtag">负重 ' + esc(e.load) + '</span>' : '') + (e.alt ? '<span class="altchip" data-alt="1">或 ' + esc(e.alt.name) + ' ⇄</span>' : '') + '<span class="dots">' + dots + '</span></div>' +
+        '<div class="exwrap' + (openFrees.has(e.uid) || running ? ' open' : '') + '" data-idx="' + idx + '">' +
+          '<div class="exrow">' +
+            '<div class="figbox" data-fig="' + esc(e.lib || 'custom') + '"></div>' +
+            '<div class="exinfo">' +
+              '<div class="exname">' + esc(e.name) + (lib ? '<span class="catchip">' + esc(lib.cat) + '</span>' : '') + (e.goal ? '<span class="goalchip">' + esc(e.goal) + '</span>' : '') + '</div>' +
+              '<div class="exmeta">' + exMeta(e) + '</div>' +
+              (e.note ? '<div class="exnote">' + esc(e.note) + '</div>' : '') +
+              '<div class="exfoot">' +
+                (e.load ? '<span class="loadtag">负重 ' + esc(e.load) + '</span>' : '') +
+                (e.alt ? '<span class="altchip" data-alt="1">或 ' + esc(e.alt.name) + ' ⇄</span>' : '') +
+                '<span class="dots">' + arr.map((d, si) => '<i class="dot' + (d ? ' on' : '') + '" data-si="' + si + '"></i>').join('') + '</span>' +
+                '<button class="tbtn' + (running ? ' on' : '') + '" data-tog="' + esc(e.uid) + '">⏱' + (running ? ' ' + fmtTime(freeT[e.uid].mode === 'stop' ? freeT[e.uid].remain : freeT[e.uid].remain) : '') + '</button>' +
+              '</div>' +
+            '</div>' +
           '</div>' +
+          '<div class="freet" data-uid="' + esc(e.uid) + '"></div>' +
         '</div>';
     });
     const wd = warmupDone();
@@ -238,7 +537,7 @@ function renderDay() {
       '<div class="warmcard' + (wd >= WARMUP_KEYS.length ? ' alldone' : '') + '" id="warmCard">' +
         '<span class="warmicon">🔥</span><div class="warmmid"><b>热身 · 动态拉伸</b><span>训练前必做 · 8 个动作 · 约 10 分钟</span></div>' +
         '<span class="tc-num">' + wd + '/' + WARMUP_KEYS.length + '</span><svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>' +
-      '<div class="progcard"><div class="tc-top"><span>今日完成 · ' + (date.getMonth() + 1) + '月' + date.getDate() + '日</span><span class="tc-num">' + day.ex.filter(e => isDone(e.uid, e.sets)).length + '/' + day.ex.length + '</span></div>' +
+      '<div class="progcard"><div class="tc-top"><span>今日完成 · ' + date.getMonth() + 1 + '月' + date.getDate() + '日</span><span class="tc-num">' + day.ex.filter(e => isDone(e.uid, e.sets)).length + '/' + day.ex.length + '</span></div>' +
       '<div class="bar"><div class="bar-in" style="width:' + Math.round(day.ex.filter(e => isDone(e.uid, e.sets)).length / day.ex.length * 100) + '%"></div></div></div>' +
       '<div class="exlist">' + listHtml + '</div>';
   }
@@ -266,19 +565,29 @@ function renderDay() {
     });
   });
 
-  wrap.querySelectorAll('.exrow').forEach(r => {
-    const idx = +r.dataset.idx;
-    r.addEventListener('click', ev => {
+  wrap.querySelectorAll('.exwrap').forEach(w => {
+    const idx = +w.dataset.idx;
+    const e = day.ex[idx];
+    const row = w.querySelector('.exrow');
+    row.addEventListener('click', ev => {
+      if (suppressClick) { suppressClick = false; return; }
       if (ev.target.closest('.dot')) return;
       if (ev.target.closest('.altchip')) { swapAlt(idx); return; }
+      if (ev.target.closest('.tbtn')) { toggleFreePanel(e.uid); return; }
       openDetail(idx);
     });
-    r.querySelectorAll('.dot').forEach(d => d.addEventListener('click', ev => {
+    w.querySelectorAll('.dot').forEach(d => d.addEventListener('click', ev => {
       ev.stopPropagation();
-      const e = day.ex[idx];
-      toggle(e.uid, e.sets, +d.dataset.si);
-      renderDay(); renderHome();
+      onSetTap(e, +d.dataset.si);
     }));
+  });
+
+  const listEl = wrap.querySelector('.exlist');
+  if (listEl) initRowSort(listEl, day);
+
+  // 重新展开正在运行或用户已展开的自由计时器
+  day.ex.forEach(e => {
+    if (openFrees.has(e.uid) || (freeT[e.uid] && freeT[e.uid].running)) renderFreePanel(e.uid);
   });
 }
 
@@ -290,6 +599,93 @@ function swapAlt(idx) {
   e.alt = old;
   save(); renderDay(); renderHome();
   toast('已切换为「' + e.name + '」');
+}
+
+/* ---------- 自由计时器面板 ---------- */
+function renderFreePanel(k) {
+  const box = $('.freet[data-uid="' + k + '"]');
+  if (!box) return;
+  const t = freeT[k] || (freeT[k] = { mode: 'countdown', running: false, remain: 30, total: 30 });
+  const presets = getPresets();
+  const editing = editingFrees.has(k);
+  const sel = t.mode === 'countdown' ? Math.round(t.total || 30) : 0;
+  const shown = t.running ? t.remain : (t.mode === 'countdown' ? (t.total || 30) : (t.remain || 0));
+  box.innerHTML =
+    '<div class="ft-head"><div class="seg tiny" id="ftMode">' +
+      '<button data-m="countdown" class="' + (t.mode === 'countdown' ? 'on' : '') + '">倒计时</button>' +
+      '<button data-m="stop" class="' + (t.mode === 'stop' ? 'on' : '') + '">计时器</button></div>' +
+      '<button class="tbtn sm" id="ftEdit">' + (editing ? '完成' : '编辑预设') + '</button></div>' +
+    (t.mode === 'countdown' ?
+      '<div class="presets">' +
+        presets.map(p => '<span class="pchip' + (sel === p ? ' on' : '') + '" data-p="' + p + '">' + fmtPre(p) + (editing ? '<b class="px" data-del="' + p + '">×</b>' : '') + '</span>').join('') +
+        (editing ? '<span class="padd"><input id="ftCustom" type="number" min="1" max="3600" inputmode="numeric" placeholder="秒数"><button class="tbtn sm on" id="ftAdd">＋</button></span>'
+                 : '<span class="pchip padd" id="ftCustomChip">＋ 自定义</span>') +
+      '</div>' : '') +
+    '<div class="ft-time" id="ftTime">' + fmtTime(shown) + '</div>' +
+    '<div class="ft-btns"><button class="bigbtn slimbtn" id="ftGo">' + (t.running ? '暂停' : '开始') + '</button>' +
+    '<button class="bigbtn ghost slimbtn" id="ftReset">重置</button></div>';
+
+  const on = id => box.querySelector(id);
+  on('#ftMode').addEventListener('click', ev => {
+    const m = ev.target.dataset.m; if (!m) return;
+    if (t.running) return;
+    t.mode = m;
+    if (m === 'stop') t.remain = 0;
+    else { if (!t.total) t.total = 30; t.remain = t.total; }
+    renderFreePanel(k);
+  });
+  on('#ftEdit').addEventListener('click', () => { editingFrees.has(k) ? editingFrees.delete(k) : editingFrees.add(k); renderFreePanel(k); });
+  on('#ftGo').addEventListener('click', () => {
+    if (t.running) {
+      if (t.mode === 'countdown') { t.remain = Math.max(0, (t.end - Date.now()) / 1000); }
+      else { t.remain = (Date.now() - t.since) / 1000; }
+      t.running = false;
+    } else {
+      if (t.mode === 'countdown') { t.total = t.total || 30; t.remain = t.total; t.end = Date.now() + t.remain * 1000; }
+      else { t.since = Date.now(); t.remain = 0; }
+      t.running = true;
+    }
+    ensureTick(); renderFreePanel(k); refreshTbtn(k);
+  });
+  on('#ftReset').addEventListener('click', () => {
+    t.running = false; t.remain = t.mode === 'countdown' ? (t.total || 30) : 0;
+    renderFreePanel(k); refreshTbtn(k);
+  });
+  box.querySelectorAll('.pchip[data-p]').forEach(c => c.addEventListener('click', ev => {
+    if (ev.target.closest('.px')) return;
+    if (t.running) return;
+    t.total = +c.dataset.p; t.remain = t.total;
+    renderFreePanel(k);
+  }));
+  box.querySelectorAll('.px').forEach(x => x.addEventListener('click', ev => {
+    ev.stopPropagation();
+    const v = +x.dataset.del;
+    savePresets(getPresets().filter(p => p !== v));
+    if (Math.round(t.total) === v) t.total = 30;
+    renderFreePanel(k);
+  }));
+  const cc = on('#ftCustomChip'); if (cc) cc.addEventListener('click', () => { editingFrees.add(k); renderFreePanel(k); });
+  const ad = on('#ftAdd'); if (ad) ad.addEventListener('click', () => {
+    const inp = on('#ftCustom'); const v = parseInt(inp && inp.value, 10);
+    if (!v || v < 1) { toast('请输入秒数'); return; }
+    const ps = getPresets(); if (!ps.includes(v)) { ps.push(v); ps.sort((a, b) => a - b); savePresets(ps); }
+    t.total = v; t.remain = v; editingFrees.delete(k);
+    renderFreePanel(k); toast('已添加 ' + fmtPre(v));
+  });
+}
+function toggleFreePanel(k) {
+  if (openFrees.has(k)) openFrees.delete(k);
+  else { openFrees.add(k); renderFreePanel(k); }
+  const w = $('.freet[data-uid="' + k + '"]');
+  if (w) w.closest('.exwrap').classList.toggle('open', openFrees.has(k));
+}
+function refreshTbtn(k) {
+  const btns = document.querySelectorAll('.tbtn[data-tog="' + k + '"]');
+  const t = freeT[k];
+  btns.forEach(b => {
+    b.classList.toggle('on', !!(t && t.running));
+    b.textContent = '⏱' + (t && t.running ? ' ' + fmtTime(t.mode === 'stop' ? t.remain : t.remain) : '');
+  });
 }
 
 /* ---------- 热身流程 ---------- */
@@ -326,6 +722,41 @@ function openSheet(html) {
 function closeSheet() { sheet.classList.remove('open'); mask.classList.remove('open'); }
 mask.addEventListener('click', closeSheet);
 
+/* 下滑关闭：拖动顶部把手（指针捕获保证跟手，甩动可关闭） */
+(function initSheetDrag() {
+  const handle = $('#sheetHandle');
+  let d = null;
+  handle.addEventListener('pointerdown', e => {
+    if (!sheet.classList.contains('open')) return;
+    d = { y0: e.clientY, ly: e.clientY, lt: performance.now(), moved: false };
+    handle.setPointerCapture(e.pointerId);
+    sheet.style.transition = 'none';
+    e.preventDefault();
+  });
+  handle.addEventListener('pointermove', e => {
+    if (!d) return;
+    const dy = Math.max(0, e.clientY - d.y0);
+    d.ly = e.clientY; d.lt = performance.now();
+    if (dy > 4) d.moved = true;
+    sheet.style.transform = dy > 0 ? 'translateY(' + dy + 'px)' : '';
+  });
+  handle.addEventListener('pointerup', e => {
+    if (!d) return;
+    const dy = Math.max(0, e.clientY - d.y0);
+    const dt = Math.max(1, performance.now() - d.lt);
+    const v = (e.clientY - d.ly) / dt;
+    sheet.style.transition = '';
+    sheet.style.transform = '';
+    if (dy > 110 || (d.moved && v > .45 && dy > 24)) closeSheet();
+    d = null;
+  });
+  handle.addEventListener('pointercancel', () => {
+    d = null;
+    sheet.style.transition = '';
+    sheet.style.transform = '';
+  });
+})();
+
 /* ---------- 动作详情 ---------- */
 function openDetail(idx) {
   const day = state.plan[curDay];
@@ -346,15 +777,14 @@ function openDetail(idx) {
     '</div>' +
     (e.note ? '<div class="notecard"><b>备注</b>' + esc(e.note) + '</div>' : '') +
     (e.alt ? '<div class="altcard">二选一动作，当前为「' + esc(e.name) + '」<button class="bigbtn ghost slimbtn" id="dtAlt">切换为 ' + esc(e.alt.name) + '</button></div>' : '') +
-    '<div class="exmeta2">点圆点打卡每一组</div>' +
+    '<div class="exmeta2">点圆点打卡每一组（时长的动作会自动倒计时）</div>' +
     '<div class="bigdots">' + bigDots + '</div>' +
     '<div class="btnrow"><button class="bigbtn ghost" id="dtEdit">编辑</button><button class="bigbtn danger" id="dtDel">移除</button></div>');
   const cv = fig(e.lib || 'custom', Math.min(300, Math.round(window.innerWidth * .72)), true);
   $('#detailFig').appendChild(cv);
   Fig3D.orbit(cv);
   sheet.querySelectorAll('.bigdot').forEach(d => d.addEventListener('click', () => {
-    toggle(e.uid, e.sets, +d.dataset.si);
-    openDetail(idx); renderDay(); renderHome();
+    onSetTap(e, +d.dataset.si);
   }));
   if ($('#dtAlt')) $('#dtAlt').addEventListener('click', () => { swapAlt(idx); openDetail(idx); });
   $('#dtEdit').addEventListener('click', () => openForm(idx));
@@ -463,12 +893,25 @@ function openForm(editIdx, preset) {
 
 /* ---------- 设置 ---------- */
 function openSettings() {
+  const th = getTheme();
   openSheet(
     '<div class="sheet-title">设置</div>' +
+    '<label class="flabel">界面主题</label>' +
+    '<div class="seg" id="thSeg">' +
+      '<button data-th="dark" class="' + (th === 'dark' ? 'on' : '') + '">🌙 夜间</button>' +
+      '<button data-th="light" class="' + (th === 'light' ? 'on' : '') + '">☀️ 日间</button></div>' +
     '<div class="setcard"><b>数据保存在本机浏览器中</b><p class="dim">记录保存在这台 iPhone 的本地存储里，换浏览器或清除网站数据会丢失，建议定期导出备份。</p></div>' +
     '<div class="btnrow"><button class="bigbtn ghost" id="stExport">导出备份</button><button class="bigbtn ghost" id="stImport">导入备份</button></div>' +
     '<div class="btnrow"><button class="bigbtn ghost" id="stSample">恢复示例计划</button><button class="bigbtn danger" id="stClear">清空全部数据</button></div>' +
-    '<div class="setcard dim small">健身周计划 v2.0 · 3D 动作演示 · 添加到主屏幕后可离线使用</div>');
+    '<div class="setcard dim small">健身周计划 v3.0 · 3D 动作演示 · 组内计时 · 自由计时器</div>');
+  sheet.querySelectorAll('#thSeg button').forEach(b => b.addEventListener('click', () => {
+    const t = b.dataset.th;
+    localStorage.setItem(THEME_KEY, t);
+    applyTheme(t);
+    renderHome();
+    if ($('#day').classList.contains('open')) renderDay();
+    openSettings();
+  }));
   $('#stExport').addEventListener('click', () => {
     const txt = JSON.stringify({ plan: state.plan, log: state.log });
     openSheet('<div class="sheet-title">导出备份</div>' +
@@ -523,6 +966,17 @@ function toast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 2200);
 }
+
+/* ---------- 主题 ---------- */
+const THEME_KEY = 'fit-theme';
+function getTheme() { return localStorage.getItem(THEME_KEY) === 'light' ? 'light' : 'dark'; }
+function applyTheme(t) {
+  document.body.classList.toggle('light', t === 'light');
+  const m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.setAttribute('content', t === 'light' ? '#f4f5f8' : '#0f1115');
+  if (window.Fig3D && Fig3D.setTheme) Fig3D.setTheme(t);
+}
+applyTheme(getTheme());
 
 /* ---------- 启动 ---------- */
 renderHome();
