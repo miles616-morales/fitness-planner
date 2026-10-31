@@ -400,17 +400,28 @@ if (HAS_DOM) (function () {
   const figs = [];
   let rafId = null;
 
-  const COL = {
-    body: [214, 224, 238], bodyB: [150, 160, 180],
-    head: [226, 233, 244],
+  const COL_DARK = {
+    body: [214, 224, 238], bodyB: [150, 160, 180], head: [226, 233, 244],
     steel: [158, 168, 186], plate: [242, 140, 58], db: [255, 159, 67],
     kb: [255, 176, 84], bench: [86, 96, 118], box: [88, 100, 124],
     sofa: [96, 106, 128], post: [120, 128, 148], band: [110, 193, 255], roller: [127, 212, 193],
-    outline: [18, 23, 33],
+    outline: [18, 23, 33], shadowA: .42,
   };
+  const COL_LIGHT = {
+    body: [88, 96, 112], bodyB: [128, 136, 152], head: [76, 84, 100],
+    steel: [118, 126, 144], plate: [232, 122, 40], db: [238, 138, 42],
+    kb: [240, 152, 62], bench: [148, 155, 170], box: [150, 158, 172],
+    sofa: [158, 165, 178], post: [112, 120, 136], band: [64, 148, 218], roller: [70, 172, 152],
+    outline: [255, 255, 255], shadowA: .2,
+  };
+  let COL = COL_DARK;
+  let BG = [19, 23, 32];
+  function applyTheme(light) {
+    COL = light ? COL_LIGHT : COL_DARK;
+    BG = light ? [233, 236, 241] : [19, 23, 32];
+  }
   const css = c => 'rgb(' + (c[0] | 0) + ',' + (c[1] | 0) + ',' + (c[2] | 0) + ')';
   const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
-  const BG = [19, 23, 32];
 
   function drawFig(cv, ex, frame, camS) {
     const ctx = cv.getContext('2d');
@@ -544,7 +555,7 @@ if (HAS_DOM) (function () {
       const f = (H / 2) / Math.tan((cam.fov || 40) * RAD / 2);
       const rx = .62 * f / gy.z, ry = rx * .3;
       const g = ctx.createRadialGradient(gy.x, gy.y, 0, gy.x, gy.y, Math.max(rx, 4));
-      g.addColorStop(0, 'rgba(0,0,0,.42)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+      g.addColorStop(0, 'rgba(0,0,0,' + COL.shadowA + ')'); g.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.save(); ctx.translate(gy.x, gy.y); ctx.scale(1, Math.max(ry / rx, .01)); ctx.translate(-gy.x, -gy.y);
       ctx.fillStyle = g; ctx.beginPath(); ctx.arc(gy.x, gy.y, rx, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
@@ -613,7 +624,9 @@ if (HAS_DOM) (function () {
 
   function updateFig(fig, now) {
     const ex = fig.ex;
-    const t = ((now - fig.t0) % ex.dur) / ex.dur;
+    let t = (now - fig.t0) % ex.dur;
+    if (t < 0) t += ex.dur;
+    t /= ex.dur;
     const n = ex.frames.length;
     const x = t * n, i = Math.floor(x) % n, j = (i + 1) % n;
     const e = .5 - .5 * Math.cos(Math.PI * (x - Math.floor(x)));
@@ -649,7 +662,7 @@ if (HAS_DOM) (function () {
     window.addEventListener('pointercancel', end);
   }
 
-  window.Fig3D = { make, orbit, LIB: LIB3D };
+  window.Fig3D = { make, orbit, LIB: LIB3D, setTheme: t => applyTheme(t === 'light') };
 })();
 
 /* Node 导出（姿态校验用） */
