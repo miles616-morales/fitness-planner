@@ -1,5 +1,5 @@
 /* 健身周计划 · 离线缓存 */
-const CACHE = 'fitplan-v2';
+const CACHE = 'fitplan-v3';
 const ASSETS = [
   './',
   './index.html',
