@@ -894,12 +894,16 @@ function openForm(editIdx, preset) {
 /* ---------- 设置 ---------- */
 function openSettings() {
   const th = getTheme();
+  const op = getBtnOp();
   openSheet(
     '<div class="sheet-title">设置</div>' +
     '<label class="flabel">界面主题</label>' +
     '<div class="seg" id="thSeg">' +
       '<button data-th="dark" class="' + (th === 'dark' ? 'on' : '') + '">🌙 夜间</button>' +
       '<button data-th="light" class="' + (th === 'light' ? 'on' : '') + '">☀️ 日间</button></div>' +
+    '<label class="flabel">按键不透明度</label>' +
+    '<div class="oprow"><input type="range" id="opRange" min="40" max="100" step="1" value="' + op + '">' +
+    '<span class="opval" id="opVal">' + op + '%</span></div>' +
     '<div class="setcard"><b>数据保存在本机浏览器中</b><p class="dim">记录保存在这台 iPhone 的本地存储里，换浏览器或清除网站数据会丢失，建议定期导出备份。</p></div>' +
     '<div class="btnrow"><button class="bigbtn ghost" id="stExport">导出备份</button><button class="bigbtn ghost" id="stImport">导入备份</button></div>' +
     '<div class="btnrow"><button class="bigbtn ghost" id="stSample">恢复示例计划</button><button class="bigbtn danger" id="stClear">清空全部数据</button></div>' +
@@ -912,6 +916,18 @@ function openSettings() {
     if ($('#day').classList.contains('open')) renderDay();
     openSettings();
   }));
+  (function () {
+    const range = $('#opRange'), val = $('#opVal');
+    function paint() {
+      const v = +range.value;
+      const pct = Math.round((v - 40) / 60 * 100);
+      range.style.background = 'linear-gradient(to right, var(--acc) 0%, var(--acc) ' + pct + '%, var(--card2) ' + pct + '%)';
+      val.textContent = v + '%';
+    }
+    range.addEventListener('input', () => { paint(); applyBtnOp(+range.value); });
+    range.addEventListener('change', () => { localStorage.setItem(OP_KEY, range.value); });
+    paint();
+  })();
   $('#stExport').addEventListener('click', () => {
     const txt = JSON.stringify({ plan: state.plan, log: state.log });
     openSheet('<div class="sheet-title">导出备份</div>' +
@@ -973,10 +989,16 @@ function getTheme() { return localStorage.getItem(THEME_KEY) === 'light' ? 'ligh
 function applyTheme(t) {
   document.body.classList.toggle('light', t === 'light');
   const m = document.querySelector('meta[name="theme-color"]');
-  if (m) m.setAttribute('content', t === 'light' ? '#f4f5f8' : '#0f1115');
+  if (m) m.setAttribute('content', t === 'light' ? '#f6f7fa' : '#0a0b0f');
   if (window.Fig3D && Fig3D.setTheme) Fig3D.setTheme(t);
 }
 applyTheme(getTheme());
+
+/* ---------- 按键不透明度 ---------- */
+const OP_KEY = 'fit-btn-op';
+function getBtnOp() { const v = parseInt(localStorage.getItem(OP_KEY) || '100', 10); return isNaN(v) ? 100 : Math.min(100, Math.max(40, v)); }
+function applyBtnOp(v) { document.body.style.setProperty('--btn-op', v / 100); }
+applyBtnOp(getBtnOp());
 
 /* ---------- 启动 ---------- */
 renderHome();
