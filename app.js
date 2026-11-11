@@ -16,6 +16,8 @@ const fmtTime = s => { s = Math.max(0, Math.round(s)); const m = Math.floor(s / 
 const fmtPre = n => (n >= 60 && n % 60 === 0) ? (n / 60) + '分' : n + 's';
 const LIB = (typeof Fig3D !== 'undefined') ? Fig3D.LIB : {};
 const fig = (key, size, live) => Fig3D.make(key, size, live);
+/* 数字/标签变化时的弹跳动效 */
+function pop(el) { if (!el) return; el.classList.remove('pop'); void el.offsetWidth; el.classList.add('pop'); }
 
 /* ================= 提示音 ================= */
 let actx = null;
@@ -68,19 +70,48 @@ let timerOv = null;   // {ex, setIdx, phase, total, remain, end}
 let chooseN = 0, chooseLo = 0, chooseHi = 0;
 
 function showTimerOv() {
-  if (!$('#timerOvRoot')) {
-    const n = el('div', 'timerov', '<div class="tov-inner" id="tovInner"></div>');
+  let n = $('#timerOvRoot');
+  if (n && n.classList.contains('tov-hide')) { n.remove(); n = null; }
+  if (!n) {
+    n = el('div', 'timerov', '<div class="tov-inner" id="tovInner"></div>');
     n.id = 'timerOvRoot';
     document.body.appendChild(n);
   }
+  n.classList.remove('tov-hide');
+  n.style.display = '';
+}
+function hideTimerChip() { const c = $('#timerchip'); if (c) c.classList.remove('show'); }
+function ensureTimerChip() { if (!$('#timerchip')) { const c = el('div', 'timerchip', ''); c.id = 'timerchip'; document.body.appendChild(c); } }
+function renderTimerChip() {
+  const c = $('#timerchip'); if (!c || !timerOv) return;
+  const ph = timerOv.phase === 'action' ? '动作' : timerOv.phase === 'rest' ? '间歇' : '完成';
+  c.innerHTML = (timerOv.phase === 'done' ? '✓ ' : '') + esc(timerOv.ex.name) + ' · ' + ph + (timerOv.phase === 'done' ? '' : ' <b>' + fmtTime(timerOv.remain) + '</b>') + '<span class="chipdot"> ● 正在计时</span>';
+  c.classList.add('show');
+}
+function minimizeTimer() {
+  if (!timerOv) return;
+  timerOv.minimized = true;
+  ensureTimerChip(); renderTimerChip();
+  const n = $('#timerOvRoot');
+  if (n) { n.classList.add('tov-hide'); setTimeout(() => { if (n.classList.contains('tov-hide')) n.style.display = 'none'; }, 190); }
+  const c = $('#timerchip'); if (c) c.onclick = expandTimer;
+}
+function expandTimer() {
+  if (!timerOv) return;
+  timerOv.minimized = false;
+  showTimerOv(); buildTov(); wireTov(); hideTimerChip();
 }
 function closeTimerOv() {
-  const n = $('#timerOvRoot'); if (n) n.remove();
+  const n = $('#timerOvRoot');
+  if (n) { n.classList.add('tov-hide'); setTimeout(() => { if (n.isConnected) n.remove(); }, 190); }
+  const c = $('#timerchip'); if (c) { c.classList.remove('show'); c.onclick = null; }
   timerOv = null; ensureTick();
 }
 function buildTov() {
   const ex = timerOv.ex, si = timerOv.setIdx;
   const title = esc(ex.name) + ' · 第' + (si + 1) + '组 <span style="color:var(--dim);font-size:13px">/ 共' + ex.sets + '组</span>';
+  const paused = !!timerOv.paused;
+  const pauseBtn = '<button class="bigbtn ghost" id="tovPause">' + (paused ? '▶ 继续' : '❚❚ 暂停') + '</button>';
   let inner = '';
   if (timerOv.phase === 'choose') {
     inner = '<div class="tov-title">' + title + '</div>' +
@@ -90,21 +121,21 @@ function buildTov() {
       '<div class="tov-btns"><button class="bigbtn" id="tovStart">开始这组</button><button class="bigbtn ghost" id="tovCancel">取消</button></div>';
   } else if (timerOv.phase === 'action') {
     inner = '<div class="tov-title">' + title + '</div>' +
-      '<div class="tov-phase ph-action">动作倒计时</div>' +
+      '<div class="tov-phase ph-action">动作倒计时' + (paused ? ' · 已暂停' : '') + '</div>' +
       '<div class="tov-num" id="tovNum">' + fmtTime(timerOv.remain) + '</div>' +
       '<div class="tov-bar"><i id="tovBar"></i></div>' +
-      '<div class="tov-btns"><button class="bigbtn ghost" id="tovSkip">跳过</button><button class="bigbtn ghost" id="tovCancel">取消</button></div>';
+      '<div class="tov-btns">' + pauseBtn + '<button class="bigbtn ghost" id="tovSkip">跳过</button><button class="bigbtn ghost" id="tovMini">收起</button><button class="bigbtn ghost" id="tovCancel">取消</button></div>';
   } else if (timerOv.phase === 'rest') {
     inner = '<div class="tov-title">' + title + '</div>' +
-      '<div class="tov-phase ph-rest">间歇倒计时</div>' +
+      '<div class="tov-phase ph-rest">间歇倒计时' + (paused ? ' · 已暂停' : '') + '</div>' +
       '<div class="tov-num" id="tovNum">' + fmtTime(timerOv.remain) + '</div>' +
       '<div class="tov-bar"><i id="tovBar"></i></div>' +
-      '<div class="tov-btns"><button class="bigbtn" id="tovDone">提前结束</button><button class="bigbtn ghost" id="tovCancel">取消</button></div>';
+      '<div class="tov-btns">' + pauseBtn + '<button class="bigbtn" id="tovDone">跳过</button><button class="bigbtn ghost" id="tovMini">收起</button><button class="bigbtn ghost" id="tovCancel">取消</button></div>';
   } else if (timerOv.phase === 'reps') {
     inner = '<div class="tov-title">' + title + '</div>' +
       '<div class="tov-phase ph-reps">已打卡 ✓</div>' +
       '<div class="tov-num reps" id="tovNum">本组 ' + esc(ex.num) + (ex.numMax ? '~' + ex.numMax : '') + ' ' + esc(ex.unit) + '</div>' +
-      (ex.rest ? '<div class="tov-sub">完成后开始组间休息</div><div class="tov-btns"><button class="bigbtn" id="tovRest">开始间歇 ' + fmtRest(ex.rest) + '</button><button class="bigbtn ghost" id="tovCancel">关闭</button></div>'
+      (ex.rest ? '<div class="tov-sub">完成后开始组间休息，也可先收起做别的</div><div class="tov-btns"><button class="bigbtn" id="tovRest">开始间歇 ' + fmtRest(ex.rest) + '</button><button class="bigbtn ghost" id="tovCancel">关闭</button></div>'
                : '<div class="tov-btns"><button class="bigbtn" id="tovCancel">完成</button></div>');
   } else if (timerOv.phase === 'done') {
     inner = '<div class="tov-title">' + title + '</div>' +
@@ -114,6 +145,7 @@ function buildTov() {
       '<div class="tov-btns"><button class="bigbtn" id="tovCancel">好</button></div>';
   }
   $('#tovInner').innerHTML = inner;
+  $('#tovInner').classList.remove('fadein'); void $('#tovInner').offsetWidth; $('#tovInner').classList.add('fadein');
 }
 function updateTovNumbers() {
   const n = $('#tovNum'); if (n && timerOv.phase !== 'choose') n.textContent = fmtTime(timerOv.remain);
@@ -121,47 +153,61 @@ function updateTovNumbers() {
 }
 
 function startActionTimer(ex, setIdx, sec) {
-  timerOv = { ex, setIdx, phase: 'action', total: sec, remain: sec, end: Date.now() + sec * 1000 };
-  showTimerOv(); buildTov(); wireTov(); ensureTick();
+  timerOv = { ex, setIdx, phase: 'action', total: sec, remain: sec, end: Date.now() + sec * 1000, paused: false, minimized: false };
+  hideTimerChip(); showTimerOv(); buildTov(); wireTov(); ensureTick();
 }
 function startRestTimer(ex, setIdx, sec) {
-  timerOv = { ex, setIdx, phase: 'rest', total: sec, remain: sec, end: Date.now() + sec * 1000 };
-  buildTov(); wireTov(); ensureTick();
+  timerOv = { ex, setIdx, phase: 'rest', total: sec, remain: sec, end: Date.now() + sec * 1000, paused: false, minimized: false };
+  hideTimerChip(); showTimerOv(); buildTov(); wireTov(); ensureTick();
 }
 function startChooseTimer(ex, setIdx, lo, hi) {
   chooseLo = lo; chooseHi = hi; chooseN = lo;
-  timerOv = { ex, setIdx, phase: 'choose', total: hi, remain: hi, end: 0 };
-  showTimerOv(); buildTov(); wireTov();
+  timerOv = { ex, setIdx, phase: 'choose', total: hi, remain: hi, end: 0, paused: false, minimized: false };
+  hideTimerChip(); showTimerOv(); buildTov(); wireTov();
 }
 function startRepsBox(ex, setIdx) {
-  timerOv = { ex, setIdx, phase: 'reps', total: 0, remain: 0, end: 0 };
-  showTimerOv(); buildTov(); wireTov();
+  timerOv = { ex, setIdx, phase: 'reps', total: 0, remain: 0, end: 0, paused: false, minimized: false };
+  hideTimerChip(); showTimerOv(); buildTov(); wireTov();
+}
+
+function togglePause() {
+  if (!timerOv || (timerOv.phase !== 'action' && timerOv.phase !== 'rest')) return;
+  if (timerOv.paused) {
+    timerOv.paused = false;
+    timerOv.end = Date.now() + timerOv.remain * 1000;
+  } else {
+    timerOv.paused = true;
+  }
+  buildTov(); wireTov();
 }
 
 function wireTov() {
   const g = id => $('#tovInner').querySelector(id);
   const c = g('#tovCancel'); if (c) c.addEventListener('click', closeTimerOv);
   const s = g('#tovStart'); if (s) s.addEventListener('click', () => { startActionTimer(timerOv.ex, timerOv.setIdx, chooseN); });
-  const m = g('#tovMin'); if (m) m.addEventListener('click', () => { if (chooseN > chooseLo) chooseN--; g('#tovNum').textContent = chooseN; });
-  const p = g('#tovPlus'); if (p) p.addEventListener('click', () => { if (chooseN < chooseHi) chooseN++; g('#tovNum').textContent = chooseN; });
-  const sk = g('#tovSkip'); if (sk) sk.addEventListener('click', () => timerPhaseDone());
-  const dn = g('#tovDone'); if (dn) dn.addEventListener('click', () => { beep(); timerOv = { ex: timerOv.ex, setIdx: timerOv.setIdx, phase: 'done', total: 1, remain: 0, end: 0 }; buildTov(); wireTov(); });
-  const r = g('#tovRest'); if (r) r.addEventListener('click', () => startRestTimer(timerOv.ex, timerOv.setIdx, timerOv.ex.rest));
+  const m = g('#tovMin'); if (m) m.addEventListener('click', () => { if (chooseN > chooseLo) chooseN--; const n = g('#tovNum'); if (n) { n.textContent = chooseN; pop(n); } });
+  const p = g('#tovPlus'); if (p) p.addEventListener('click', () => { if (chooseN < chooseHi) chooseN++; const n = g('#tovNum'); if (n) { n.textContent = chooseN; pop(n); } });
+  const sk = g('#tovSkip'); if (sk) sk.addEventListener('click', () => { timerOv.paused = false; timerPhaseDone(); });
+  const ps = g('#tovPause'); if (ps) ps.addEventListener('click', togglePause);
+  const dn = g('#tovDone'); if (dn) dn.addEventListener('click', () => { timerOv.paused = false; beep(); timerOv = { ex: timerOv.ex, setIdx: timerOv.setIdx, phase: 'done', total: 0, remain: 0, end: 0, minimized: false }; buildTov(); wireTov(); });
+  const rs = g('#tovRest'); if (rs) rs.addEventListener('click', () => startRestTimer(timerOv.ex, timerOv.setIdx, timerOv.ex.rest));
+  const mi = g('#tovMini'); if (mi) mi.addEventListener('click', minimizeTimer);
 }
 
 function timerPhaseDone() {
   if (!timerOv) return;
   const { ex, setIdx, phase } = timerOv;
+  const wasMini = !!timerOv.minimized;
   if (phase === 'action') {
     const arr = getLogArr(ex.uid, ex.sets);
     if (!arr[setIdx]) { arr[setIdx] = true; save(); }
     renderDay(); renderHome(); refreshSheetDots(ex);
     beep(980, .25);
-    if (ex.rest > 0) { startRestTimer(ex, setIdx, ex.rest); }
-    else { timerOv = { ex, setIdx, phase: 'done', total: 1, remain: 0, end: 0 }; buildTov(); wireTov(); }
+    if (ex.rest > 0) { startRestTimer(ex, setIdx, ex.rest); if (wasMini) minimizeTimer(); }
+    else { timerOv = { ex, setIdx, phase: 'done', total: 0, remain: 0, end: 0, minimized: false }; buildTov(); wireTov(); if (wasMini) minimizeTimer(); }
   } else if (phase === 'rest') {
     beep(660, .3); beep(880, .3);
-    timerOv = { ex, setIdx, phase: 'done', total: 1, remain: 0, end: 0 }; buildTov(); wireTov();
+    timerOv = { ex, setIdx, phase: 'done', total: 0, remain: 0, end: 0, minimized: false }; buildTov(); wireTov(); if (wasMini) minimizeTimer();
   }
 }
 
@@ -172,9 +218,10 @@ function ensureTick() {
   if (!timerInt && haveTimers()) timerInt = setInterval(() => {
     const now = Date.now();
     if (timerOv) {
-      if (timerOv.phase === 'action' || timerOv.phase === 'rest') {
+      if ((timerOv.phase === 'action' || timerOv.phase === 'rest') && !timerOv.paused) {
         timerOv.remain = Math.max(0, (timerOv.end - now) / 1000);
         if (timerOv.remain <= 0) timerPhaseDone();
+        else if (timerOv.minimized) renderTimerChip();
         else updateTovNumbers();
       }
     }
@@ -185,9 +232,11 @@ function ensureTick() {
 
 /* 打卡状态变化后，同步刷新详情弹层里的打卡圆点 */
 function refreshSheetDots(ex) {
-  if (!sheet.classList.contains('open')) return;
+  const container = sheet.querySelector('.bigdots');
+  if (!container) return;
   const arr = getLogArr(ex.uid, ex.sets);
-  sheet.querySelectorAll('.bigdot').forEach(d => d.classList.toggle('on', !!arr[+d.dataset.si]));
+  container.innerHTML = arr.map((d, si) => '<i class="bigdot' + (d ? ' on' : '') + '" data-si="' + si + '">' + (si + 1) + '</i>').join('');
+  container.querySelectorAll('.bigdot').forEach(d => d.addEventListener('click', () => onSetTap(ex, +d.dataset.si)));
 }
 
 /* ================= 打卡流程 ================= */
@@ -200,10 +249,50 @@ function onSetTap(ex, setIdx) {
     if (hi > lo) startChooseTimer(ex, setIdx, lo, hi);
     else startActionTimer(ex, setIdx, lo);
   } else {
-    if (!arr[setIdx]) { arr[setIdx] = true; save(); }
+    arr[setIdx] = true; save();
     renderDay(); renderHome(); refreshSheetDots(ex);
     startRepsBox(ex, setIdx);
   }
+}
+
+/* 点「计时打卡」（仅时长型）跑 动作倒计时→自动打卡→间歇 */
+function timeTimerFor(ex) {
+  const lo = toSec(ex.num, ex.unit), hi = ex.numMax ? toSec(ex.numMax, ex.unit) : lo;
+  const arr = getLogArr(ex.uid, ex.sets);
+  let si = arr.findIndex(v => !v); if (si < 0) si = 0;
+  closeSheet();
+  if (hi > lo) startChooseTimer(ex, si, lo, hi);
+  else startActionTimer(ex, si, lo);
+}
+
+/* ================= 组记录（重量/次数/余力 → 本地历史库） ================= */
+function openRecordSheet(idx) {
+  const day = state.plan[curDay];
+  const e = day.ex[idx];
+  const ld = getLastData(e.uid);
+  openSheet(
+    '<div class="sheet-title">记录 · ' + esc(e.name) + '</div>' +
+    '<div class="recrow">' +
+      '<label>重量(kg)<input id="rcW" type="number" inputmode="decimal" value="' + esc(ld.w || '') + '" placeholder="公斤"></label>' +
+      '<label>次数 / 秒<input id="rcR" type="number" inputmode="numeric" value="' + esc(ld.r != null ? ld.r : e.num) + '"></label>' +
+    '</div>' +
+    '<div class="flabel">剩多少余力</div>' +
+    '<div class="segged" id="rcRR">' + ['', '0', '1', '2', '3+'].map(v => '<button data-v="' + v + '" class="' + (String(ld.rr || '') === v ? 'on' : '') + '">' + (v === '' ? '—' : v) + '</button>').join('') + '</div>' +
+    '<div class="btnrow"><button class="bigbtn" id="rcSave">保存记录</button></div>');
+
+  let rr = String(ld.rr || '');
+  sheet.querySelectorAll('#rcRR button').forEach(b => b.addEventListener('click', () => {
+    rr = b.dataset.v;
+    sheet.querySelectorAll('#rcRR button').forEach(x => x.classList.toggle('on', x === b));
+    pop(b);
+  }));
+  $('#rcSave').addEventListener('click', () => {
+    const w = $('#rcW').value.trim(), r = $('#rcR').value.trim();
+    addRecord({ ts: Date.now(), uid: e.uid, name: e.name, cat: LIB[e.lib] ? LIB[e.lib].cat : '自定义', unit: e.unit, w: w || '', r: r || e.num, rr });
+    setLastData(e.uid, { w: w || '', r: r || e.num, rr });
+    closeSheet();
+    toast('已记录，可在「我的」查看');
+  });
 }
 
 /* ================= 数据结构 ================= */
@@ -216,11 +305,13 @@ const DAYTYPES = {
 
 const RECOVERY_ITEMS = [
   { uid: 'rc1', name: '泡沫轴滚动', desc: '针对训练部位滚动，遇到酸痛点停留 20~30 秒' },
-  { uid: 'rc2', name: '动态拉伸流程', desc: '完成热身流程 8 个动作，充分活动关节', link: 'warmup' },
-  { uid: 'rc3', name: '低强度有氧 20~30 分钟', desc: '快走 / 慢跑 / 慢速骑行三选一，以能轻松聊天的强度进行' },
-  { uid: 'rc4', name: '饮食：略减碳水', desc: '足量蛋白质与蔬菜' },
-  { uid: 'rc5', name: '作息：提前入睡', desc: '比平时多睡一小时' },
-  { uid: 'rc6', name: '呼吸 / 冥想 10 分钟', desc: '午后在安静处专注呼吸或听冥想音频，帮助神经系统降频' },
+  { uid: 'rc2', name: '动态拉伸流程', desc: '完成热身 8 个动作，充分活动关节', link: 'warmup' },
+  { uid: 'rc3', name: '低强度有氧 20~30 分钟', desc: '快走 / 慢跑 / 慢速骑行，以能轻松聊天的强度进行' },
+  { uid: 'rc4', name: '泡沫轴墙滑（前锯肌轻练）', desc: '1~2 组 × 6~8 次，动作轻松流畅，不计作前锯肌力量训练量' },
+  { uid: 'rc5', name: '上斜方筋膜放松', desc: '温热敷 10 分钟（可选），再做轻柔侧颈牵拉 每侧15~20秒 × 2' },
+  { uid: 'rc6', name: '饮食：略减碳水', desc: '足量蛋白质与蔬菜' },
+  { uid: 'rc7', name: '作息：提前入睡', desc: '比平时多睡一小时' },
+  { uid: 'rc8', name: '呼吸 / 冥想 10 分钟', desc: '午后在安静处专注呼吸，帮助神经系统降频' },
 ];
 
 const WARMUP_KEYS = ['wristrock', 'catcow', 'hkneelrot', 'butterfly', 'hip9090', 'rot9090', 'hamstretch', 'sofastretch'];
@@ -235,36 +326,44 @@ function defaultPlan() {
   const rest = type => ({ type, ex: [] });
   return [
     { type: 'strength', ex: [
-      ex('backsquat', { sets: 4, setsMax: 5, num: 1, numMax: 5, rest: 150, load: '中等偏重（先热身）', goal: '下肢基础力量' }),
-      ex('press', { sets: 4, num: 3, numMax: 5, rest: 120, load: '中等重量', goal: '肩部 / 上肢推力', alt: { lib: 'bench', name: '卧推' } }),
-      ex('rdl', { sets: 3, setsMax: 4, num: 8, numMax: 10, rest: 90, load: '中等重量', goal: '后侧链，重点臀肌' }),
-      ex('oaplank', { sets: 3, num: 10, note: '两边交替，新手单臂平板；进阶平板哑铃划船', rest: 60, load: '自重 / 哑铃', goal: '核心抗旋转', alt: { lib: 'prow', name: '平板哑铃划船' } }),
+      ex('backsquat', { sets: 4, num: 3, numMax: 5, rest: 210, load: '中等偏重（先热身）', goal: '下肢基础力量' }),
+      ex('press', { sets: 4, num: 3, numMax: 5, rest: 150, load: '中等重量', goal: '肩部 / 上肢推力', note: '实力推与卧推可隔周轮换，或固定卧推连续几周', alt: { lib: 'bench', name: '杠铃卧推' } }),
+      ex('rdl', { sets: 3, num: 6, numMax: 8, rest: 120, load: '中等重量', goal: '后侧链，重点臀肌' }),
+      ex('prow', { sets: 3, num: 5, perSide: true, rest: 75, goal: '核心抗旋', note: '新手单臂平板，进阶平板哑铃划船' }),
       ex('invrow', { sets: 3, num: 8, numMax: 10, rest: 90, load: '自重', goal: '上背部肌群' }),
-      ex('slrdl', { sets: 3, num: 6, numMax: 10, perSide: true, rest: 60, load: '轻~中等', goal: '平衡双腿力量' }),
+      ex('slrdl', { sets: 2, num: 6, numMax: 8, perSide: true, rest: 75, load: '轻~中等', goal: '平衡双腿力量' }),
+      ex('latraise', { sets: 2, num: 12, numMax: 20, rest: 75, load: '轻重量', goal: '中束' }),
+      ex('curl', { name: '绳索二头弯举', sets: 2, num: 10, numMax: 15, rest: 75, goal: '手臂' }),
     ] },
     { type: 'speed', ex: [
-      ex('clean', { sets: 4, num: 1, numMax: 5, rest: 120, note: '有举重基础做高翻；新手做负重蹲跳5次。质量优先，动作变形立即降组', goal: '下肢爆发力', alt: { lib: 'jsquat', name: '负重蹲跳' } }),
-      ex('clappu', { sets: 3, num: 6, numMax: 8, rest: 90, goal: '上肢爆发力' }),
-      ex('kbswing', { sets: 3, num: 12, numMax: 15, rest: 90, load: '4~6kg起步', goal: '髋主导爆发力' }),
-      ex('sideplank', { sets: 3, num: 30, numMax: 45, unit: '秒', perSide: true, rest: 60, goal: '体侧核心' }),
-      ex('deadbug', { sets: 3, num: 30, numMax: 45, unit: '秒', rest: 60, goal: '核心稳定' }),
-      ex('bulgarian', { sets: 3, num: 45, numMax: 60, unit: '秒', perSide: true, rest: 60, goal: '单腿稳定' }),
+      ex('clean', { sets: 4, num: 2, rest: 150, goal: '垂直爆发力', note: '有举重基础做高翻；新手做负重蹲跳 4×3。质量优先，变慢即结束', alt: { lib: 'jsquat', name: '负重蹲跳' } }),
+      ex('clappu', { sets: 3, num: 3, numMax: 5, rest: 105, goal: '上肢爆发力' }),
+      ex('kbswing', { sets: 3, num: 8, numMax: 10, rest: 90, load: '4~6kg起步', goal: '髋主导爆发力' }),
+      ex('sideplank', { sets: 2, num: 30, numMax: 40, unit: '秒', perSide: true, rest: 60, goal: '体侧核心' }),
+      ex('deadbug', { sets: 2, num: 20, numMax: 25, unit: '秒', perSide: true, rest: 60, goal: '核心稳定' }),
+      ex('bulgarian', { sets: 2, num: 25, numMax: 30, unit: '秒', perSide: true, rest: 60, goal: '单腿稳定' }),
+      ex('pushup', { name: '高位支撑肩胛俯卧撑Plus', sets: 2, num: 8, numMax: 12, rest: 60, goal: '前锯肌轻练', note: '轻量轻幅度，留约4次余力' }),
+      ex('pushdown', { sets: 2, num: 10, numMax: 15, rest: 75, goal: '手臂' }),
     ] },
     rest('recovery'),
     { type: 'strength', ex: [
-      ex('dl', { sets: 4, num: 3, numMax: 5, rest: 150, load: '中等偏重（轻重量热身）', goal: '后侧链力量、髋发力模式' }),
-      ex('pullup', { sets: 4, num: 5, rest: 120, load: '自重或轻负重', goal: '上肢拉力、背部肌群' }),
-      ex('frontsquat', { sets: 3, setsMax: 4, num: 4, numMax: 6, rest: 105, load: '中等重量', goal: '下肢力量、躯干刚性' }),
-      ex('dbbench', { sets: 3, num: 10, note: '左右交替，共10次', rest: 90, load: '中等重量', goal: '单侧上肢推、躯干稳定' }),
-      ex('gobletlunge', { sets: 3, num: 12, numMax: 16, note: '共12~16次', rest: 90, load: '轻~中等', goal: '侧向发力、单腿控制' }),
-      ex('bandanti', { sets: 3, num: 30, unit: '秒', perSide: true, rest: 60, load: '中等负荷', goal: '核心抗旋转' }),
+      ex('dl', { sets: 3, num: 3, numMax: 5, rest: 210, load: '中等偏重，不追求力竭', goal: '后侧链力量' }),
+      ex('pullup', { sets: 4, num: 4, numMax: 6, rest: 150, load: '自重或轻负重', goal: '上肢拉力' }),
+      ex('frontsquat', { sets: 3, num: 4, numMax: 6, rest: 150, load: '中等重量', goal: '下肢力量、躯干刚性' }),
+      ex('dbbench', { sets: 3, num: 5, perSide: true, rest: 105, load: '中等重量', goal: '单侧上肢推' }),
+      ex('gobletlunge', { sets: 3, num: 6, numMax: 8, perSide: true, rest: 90, load: '轻~中等', goal: '侧向发力' }),
+      ex('bandanti', { sets: 3, num: 20, numMax: 30, unit: '秒', perSide: true, rest: 60, goal: '核心抗旋转' }),
+      ex('pushup', { name: '地面高位支撑肩胛俯卧撑Plus', sets: 3, num: 8, numMax: 15, rest: 90, goal: '前锯肌主练', note: '肘伸直时把地面继续推远；能稳定完成3×15再降高度/加弹力带' }),
+      ex('curl', { name: '绳索二头弯举', sets: 2, num: 10, numMax: 15, rest: 75, goal: '手臂' }),
     ] },
     { type: 'speed', ex: [
-      ex('boxjump', { sets: 4, num: 5, rest: 120, note: '跳箱5次；或悬垂高翻1~5次。重量以动作质量优先', goal: '下肢爆发力、神经协调', alt: { lib: 'hangclean', name: '悬垂高翻' } }),
-      ex('lateralhop', { sets: 4, num: 10, note: '每边10个来回', perSide: true, rest: 90, goal: '侧向爆发力、足踝稳定' }),
-      ex('quickfeet', { sets: 4, num: 10, numMax: 15, unit: '秒', rest: 60, goal: '下肢敏捷、脚下移动' }),
-      ex('copenhagen', { sets: 3, num: 20, numMax: 30, unit: '秒', perSide: true, rest: 60, note: '新手自重，进阶髋部加轻杠铃片', goal: '髋内收肌群、侧向稳定' }),
-      ex('farmerwalk', { sets: 3, num: 20, unit: '米', note: '农夫行走20米来回；或半蹲侧向移动15步来回', rest: 90, load: '中等重量', goal: '躯干核心稳定', alt: { lib: 'shuffle', name: '半蹲侧向移动' } }),
+      ex('boxjump', { sets: 4, num: 3, rest: 150, goal: '下肢爆发力', note: '有技术基础可选悬垂高翻4×2', alt: { lib: 'hangclean', name: '悬垂高翻' } }),
+      ex('lateralhop', { sets: 3, num: 5, numMax: 6, perSide: true, rest: 105, goal: '侧向爆发力', note: '每次落地计一次，不把来回算作一次' }),
+      ex('quickfeet', { sets: 3, num: 8, numMax: 10, unit: '秒', rest: 75, goal: '下肢敏捷' }),
+      ex('copenhagen', { sets: 3, num: 20, numMax: 30, unit: '秒', perSide: true, rest: 60, goal: '髋内收、侧向稳定' }),
+      ex('farmerwalk', { sets: 3, num: 20, numMax: 30, unit: '米', rest: 90, goal: '躯干稳定', note: '或半蹲侧向移动 每方向10~15步', alt: { lib: 'shuffle', name: '半蹲侧向移动' } }),
+      ex('latraise', { sets: 2, num: 12, numMax: 20, rest: 75, goal: '中束' }),
+      ex('revfly', { sets: 2, num: 12, numMax: 15, rest: 75, load: '轻重量', goal: '后束+肩胛控制' }),
     ] },
     rest('recovery'),
     rest('rest'),
@@ -272,7 +371,8 @@ function defaultPlan() {
 }
 
 /* ================= 存储 ================= */
-const KEY = 'fitplan-v2';
+const KEY = 'fitplan-v3';
+const RECORDS_KEY = 'fit-records';
 let state = load();
 pruneLog();
 function load() {
@@ -283,6 +383,17 @@ function load() {
   return { plan: defaultPlan(), log: {} };
 }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) { toast('保存失败：存储空间不足'); } }
+
+/* 训练记录库（本地，按动作分类） */
+function loadRecords() { try { const r = JSON.parse(localStorage.getItem(RECORDS_KEY) || '[]'); return Array.isArray(r) ? r : []; } catch (e) { return []; } }
+function saveRecords(r) { try { localStorage.setItem(RECORDS_KEY, JSON.stringify(r)); } catch (e) {} }
+function addRecord(rec) {
+  const r = loadRecords();
+  r.push(rec);
+  if (r.length > 3000) r.splice(0, r.length - 3000);
+  saveRecords(r);
+}
+function clearRecords() { localStorage.removeItem(RECORDS_KEY); }
 function pruneLog() {
   const cutoff = Date.now() - 120 * 864e5;
   for (const d in state.log) {
@@ -292,8 +403,14 @@ function pruneLog() {
 }
 function getLogArr(key, sets) {
   const day = state.log[todayStr()] || (state.log[todayStr()] = {});
-  if (!Array.isArray(day[key]) || day[key].length !== sets) day[key] = new Array(sets).fill(false);
-  return day[key];
+  let a = day[key];
+  if (!Array.isArray(a)) { a = day[key] = new Array(sets).fill(false); }
+  else if (a.length !== sets) {
+    const b = new Array(sets);
+    for (let i = 0; i < sets; i++) b[i] = i < a.length ? a[i] : false;
+    a = day[key] = b;
+  }
+  return a;
 }
 function toggle(key, sets, i) { const arr = getLogArr(key, sets); arr[i] = !arr[i]; save(); }
 function isDone(key, sets) { return sets > 0 && getLogArr(key, sets).every(Boolean); }
@@ -308,6 +425,7 @@ app.innerHTML =
   '<div id="tipbar" class="tipbar" style="display:none"></div>';
 
 /* ---------- 首页 ---------- */
+let homeTab = 'plan';
 function renderHome() {
   const home = $('#home');
   const ti = todayIdx();
@@ -327,7 +445,7 @@ function renderHome() {
     const isToday = i === ti;
     let right;
     if (day.type === 'rest' || (!day.ex.length && day.type !== 'recovery')) right = '<span class="rest-tag">休息</span>';
-    else if (day.type === 'recovery') right = '<span class="daycount">恢复清单 6 项</span>';
+    else if (day.type === 'recovery') right = '<span class="daycount">恢复清单 ' + RECOVERY_ITEMS.length + ' 项</span>';
     else right = '<span class="daycount">' + day.ex.length + ' 个动作</span>';
     weekHtml +=
       '<div class="dayrow' + (isToday ? ' today' : '') + '" data-i="' + i + '">' +
@@ -340,8 +458,8 @@ function renderHome() {
 
   let todayCard;
   if (day.type === 'recovery') {
-    todayCard = '<div class="todaycard rec"><div class="tc-top"><span>主动恢复日 · ' + DAY_NAMES[ti] + '</span><span class="tc-num">' + recoveryDone() + '/6</span></div>' +
-      '<div class="bar"><div class="bar-in" style="width:' + Math.round(recoveryDone() / 6 * 100) + '%"></div></div>' +
+    todayCard = '<div class="todaycard rec"><div class="tc-top"><span>主动恢复日 · ' + DAY_NAMES[ti] + '</span><span class="tc-num">' + recoveryDone() + '/' + RECOVERY_ITEMS.length + '</span></div>' +
+      '<div class="bar"><div class="bar-in" style="width:' + Math.round(recoveryDone() / RECOVERY_ITEMS.length * 100) + '%"></div></div>' +
       '<div class="tc-list">' + RECOVERY_ITEMS.map(it => '<span class="tc-ex' + (isDone(it.uid, 1) ? ' done' : '') + '">' + esc(it.name.split('：')[0].split(' ')[0]) + '</span>').join('') + '</div></div>';
   } else if (!dayEx.length) {
     todayCard = '<div class="todaycard rest">今天完全休息，好好恢复 💤</div>';
@@ -351,19 +469,33 @@ function renderHome() {
       '<div class="tc-list">' + dayEx.map(e => '<span class="tc-ex' + (isDone(e.uid, e.sets) ? ' done' : '') + '">' + esc(e.name) + '</span>').join('') + '</div></div>';
   }
 
-  home.innerHTML =
+  const header =
     '<div class="topbar"><div><h1>健身周计划</h1><div class="sub">' + (date.getMonth() + 1) + '月' + date.getDate() + '日 · ' + DAY_NAMES[ti] + ' · ' + counts.strength + '力量 ' + counts.speed + '速度 ' + counts.recovery + '恢复</div></div>' +
     '<button class="iconbtn" id="btnSettings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.5 7.5 0 0 0-1.7-1L15 3.5h-4l-.3 2.5a7.5 7.5 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.5 7.5 0 0 0 1.7 1l.3 2.5h4l.3-2.5a7.5 7.5 0 0 0 1.7-1l2.4 1 2-3.4z" fill="none"/></svg></button></div>' +
-    todayCard +
-    '<details class="ideacard"><summary>训练理念：合理 · 规律 · 全面</summary>' +
-      '<p><b>重动作而非极限重量</b>普通训练者应关注动作模式标准、肌肉参与正确、关节灵活性，让身体更可控更协调。</p>' +
-      '<p><b>规律训练稳下限</b>优先保证每周规律完成高质量训练，持续激活神经和肌肉，筑牢运动表现的下限。</p>' +
-      '<p><b>全面训练防伤病</b>先追求能力全面，再强化单项。伤病发生率由能力下限的宽度决定，而非上限高度。</p></details>' +
-    '<div class="sec-title">本周安排</div>' +
-    '<div class="weeklist">' + weekHtml + '</div>';
+    '<div class="seg homeseg" id="homeTabSeg">' +
+      '<button data-t="plan" class="' + (homeTab === 'plan' ? 'on' : '') + '">计划</button>' +
+      '<button data-t="mine" class="' + (homeTab === 'mine' ? 'on' : '') + '">我的</button></div>';
+
+  let body;
+  if (homeTab === 'mine') {
+    body = renderMineBody();
+  } else {
+    body = todayCard +
+      '<details class="ideacard"><summary>训练理念：合理 · 规律 · 全面</summary>' +
+        '<p><b>重动作而非极限重量</b>普通训练者应关注动作模式标准、肌肉参与正确、关节灵活性，让身体更可控更协调。</p>' +
+        '<p><b>规律训练稳下限</b>优先保证每周规律完成高质量训练，持续激活神经和肌肉，筑牢运动表现的下限。</p>' +
+        '<p><b>全面训练防伤病</b>先追求能力全面，再强化单项。伤病发生率由能力下限的宽度决定，而非上限高度。</p></details>' +
+      '<div class="sec-title">本周安排</div>' +
+      '<div class="weeklist">' + weekHtml + '</div>';
+  }
+
+  home.innerHTML = header + body;
 
   home.querySelectorAll('.dayrow').forEach(r => r.addEventListener('click', () => openDay(+r.dataset.i)));
+  home.querySelectorAll('#homeTabSeg button').forEach(b => b.addEventListener('click', () => { homeTab = b.dataset.t; renderHome(); }));
   $('#btnSettings').addEventListener('click', openSettings);
+  const mc = $('#mineClear');
+  if (mc) mc.addEventListener('click', () => { if (confirm('确定清空全部训练记录？此操作不可恢复。')) { clearRecords(); renderHome(); } });
 
   const tip = $('#tipbar');
   if (showTip) {
@@ -371,6 +503,35 @@ function renderHome() {
     tip.innerHTML = '📲 想全屏使用？在 Safari 底部分享按钮里选「添加到主屏幕」<b id="tipClose">知道了</b>';
     tip.querySelector('#tipClose').addEventListener('click', () => { sessionStorage.setItem('tipClosed', '1'); tip.style.display = 'none'; });
   } else tip.style.display = 'none';
+}
+
+/* 「我的」成长轨迹：记录按分类→动作分组展示 */
+function renderMineBody() {
+  const recs = loadRecords();
+  if (!recs.length) {
+    return '<div class="emptyday"><div style="font-size:40px">📊</div><p>还没有训练记录</p><p class="dim">训练时点动作卡里的「✎ 记录」保存每组数据</p></div>';
+  }
+  const byCat = {};
+  recs.forEach(r => { const c = r.cat || '自定义'; (byCat[c] = byCat[c] || {}); (byCat[c][r.name] = byCat[c][r.name] || []).push(r); });
+  const cats = Object.keys(byCat);
+  let html = '<div class="minesum">累计记录 <b>' + recs.length + '</b> 组 · 覆盖 <b>' + cats.length + '</b> 类动作</div>';
+  for (const cat of cats) {
+    html += '<div class="libgroup">' + esc(cat) + '</div>';
+    const exs = byCat[cat];
+    const names = Object.keys(exs).sort((a, b) => exs[b][exs[b].length - 1].ts - exs[a][exs[a].length - 1].ts);
+    for (const name of names) {
+      const list = exs[name].slice().sort((a, b) => a.ts - b.ts);
+      const weights = list.filter(r => parseFloat(r.w) > 0).map(r => parseFloat(r.w));
+      const best = weights.length ? Math.max.apply(null, weights) : null;
+      const last = list[list.length - 1];
+      html += '<details class="mex"><summary><div class="mexname">' + esc(name) + '</div>' +
+        '<div class="mexstat">' + (best != null ? '最好 ' + best + 'kg · ' : '') + '最近 ' + esc(last.w ? last.w + 'kg' : (last.r || '')) + ' · ' + list.length + '组</div></summary>' +
+        '<div class="mexlist">' + list.slice().reverse().map(r =>
+          '<div class="mexrow"><span>' + new Date(r.ts).toLocaleDateString() + '</span><span class="mx">' + esc(r.w ? r.w + 'kg × ' : '') + esc(r.r || '') + (r.rr !== '' ? ' · 余力' + r.rr : '') + '</span></div>').join('') + '</div></details>';
+    }
+  }
+  html += '<div class="btnrow"><button class="bigbtn ghost slimbtn" id="mineClear">清空全部记录</button></div>';
+  return html;
 }
 
 /* ---------- 日视图 ---------- */
@@ -525,6 +686,7 @@ function renderDay() {
                 (e.load ? '<span class="loadtag">负重 ' + esc(e.load) + '</span>' : '') +
                 (e.alt ? '<span class="altchip" data-alt="1">或 ' + esc(e.alt.name) + ' ⇄</span>' : '') +
                 '<span class="dots">' + arr.map((d, si) => '<i class="dot' + (d ? ' on' : '') + '" data-si="' + si + '"></i>').join('') + '</span>' +
+                '<button class="tbtn" data-rec="' + idx + '">✎ 记录</button>' +
                 '<button class="tbtn' + (running ? ' on' : '') + '" data-tog="' + esc(e.uid) + '">⏱' + (running ? ' ' + fmtTime(freeT[e.uid].mode === 'stop' ? freeT[e.uid].remain : freeT[e.uid].remain) : '') + '</button>' +
               '</div>' +
             '</div>' +
@@ -572,6 +734,7 @@ function renderDay() {
     row.addEventListener('click', ev => {
       if (suppressClick) { suppressClick = false; return; }
       if (ev.target.closest('.dot')) return;
+      if (ev.target.closest('[data-rec]')) { openRecordSheet(idx); return; }
       if (ev.target.closest('.altchip')) { swapAlt(idx); return; }
       if (ev.target.closest('.tbtn')) { toggleFreePanel(e.uid); return; }
       openDetail(idx);
@@ -674,10 +837,18 @@ function renderFreePanel(k) {
   });
 }
 function toggleFreePanel(k) {
-  if (openFrees.has(k)) openFrees.delete(k);
-  else { openFrees.add(k); renderFreePanel(k); }
   const w = $('.freet[data-uid="' + k + '"]');
-  if (w) w.closest('.exwrap').classList.toggle('open', openFrees.has(k));
+  if (openFrees.has(k)) {
+    openFrees.delete(k);
+    const wrap = w ? w.closest('.exwrap') : null;
+    if (wrap && w) {
+      w.classList.add('fclosing');
+      setTimeout(() => { wrap.classList.remove('open'); w.classList.remove('fclosing'); }, 160);
+    } else if (wrap) wrap.classList.remove('open');
+  } else {
+    openFrees.add(k); renderFreePanel(k);
+    if (w) w.closest('.exwrap').classList.add('open');
+  }
 }
 function refreshTbtn(k) {
   const btns = document.querySelectorAll('.tbtn[data-tog="' + k + '"]');
@@ -714,13 +885,26 @@ function openWarmup() {
 
 /* ---------- 底部弹层 ---------- */
 const mask = $('#mask'), sheet = $('#sheet'), sheetBody = $('#sheetBody');
+let lastFocus = null;
 function openSheet(html) {
+  lastFocus = document.activeElement;
   sheetBody.innerHTML = html;
   sheet.classList.add('open'); mask.classList.add('open');
   sheet.scrollTop = 0;
+  sheet.setAttribute('role', 'dialog');
+  sheet.setAttribute('aria-modal', 'true');
+  const t = sheet.querySelector('.sheet-title');
+  sheet.setAttribute('aria-label', t ? t.textContent : '对话框');
+  sheet.setAttribute('tabindex', '-1');
+  sheet.focus();
 }
-function closeSheet() { sheet.classList.remove('open'); mask.classList.remove('open'); }
+function closeSheet() {
+  sheet.removeAttribute('tabindex');
+  sheet.classList.remove('open'); mask.classList.remove('open');
+  if (lastFocus && lastFocus.focus) lastFocus.focus();
+}
 mask.addEventListener('click', closeSheet);
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && sheet.classList.contains('open')) closeSheet(); });
 
 /* 下滑关闭：拖动顶部把手（指针捕获保证跟手，甩动可关闭） */
 (function initSheetDrag() {
@@ -763,6 +947,7 @@ function openDetail(idx) {
   const e = day.ex[idx];
   const lib = LIB[e.lib];
   const arr = getLogArr(e.uid, e.sets);
+  const isTime = e.unit === '秒' || e.unit === '分钟' || e.unit === '小时';
   const bigDots = arr.map((d, si) => '<i class="bigdot' + (d ? ' on' : '') + '" data-si="' + si + '">' + (si + 1) + '</i>').join('');
   openSheet(
     '<div class="sheet-fig" id="detailFig"></div>' +
@@ -776,9 +961,11 @@ function openDetail(idx) {
       (e.perSide ? '<span class="metachip">左右两侧分别完成</span>' : '') +
     '</div>' +
     (e.note ? '<div class="notecard"><b>备注</b>' + esc(e.note) + '</div>' : '') +
-    (e.alt ? '<div class="altcard">二选一动作，当前为「' + esc(e.name) + '」<button class="bigbtn ghost slimbtn" id="dtAlt">切换为 ' + esc(e.alt.name) + '</button></div>' : '') +
+    (e.alt ? '<div class="altcard">二选一动作，当前为「' + esc(e.name) + '」<div class="altrow"><button class="bigbtn ghost slimbtn" id="dtAlt">切换为 ' + esc(e.alt.name) + '</button><button class="bigbtn ghost slimbtn danger" id="dtAltDel">移除替换</button></div></div>' : '') +
     '<div class="exmeta2">点圆点打卡每一组（时长的动作会自动倒计时）</div>' +
+    '<div class="setsrow"><span>打卡组数</span><button id="dtSetsDn">−</button><b id="dtSetsVal">' + e.sets + '</b><button id="dtSetsUp">＋</button></div>' +
     '<div class="bigdots">' + bigDots + '</div>' +
+    '<div class="btnrow"><button class="bigbtn ghost" id="dtRec">✎ 记录本组</button>' + (isTime ? '<button class="bigbtn ghost" id="dtTimer">⏱ 计时打卡</button>' : '') + '</div>' +
     '<div class="btnrow"><button class="bigbtn ghost" id="dtEdit">编辑</button><button class="bigbtn danger" id="dtDel">移除</button></div>');
   const cv = fig(e.lib || 'custom', Math.min(300, Math.round(window.innerWidth * .72)), true);
   $('#detailFig').appendChild(cv);
@@ -786,7 +973,26 @@ function openDetail(idx) {
   sheet.querySelectorAll('.bigdot').forEach(d => d.addEventListener('click', () => {
     onSetTap(e, +d.dataset.si);
   }));
+  let ns = e.sets;
+  const changeSets = f => {
+    ns = f(ns); e.sets = ns; save();
+    const bd = sheet.querySelector('.bigdots');
+    if (bd) { bd.classList.remove('fadein'); void bd.offsetWidth; bd.classList.add('fadein'); }
+    refreshSheetDots(e);
+    $('#dtSetsVal').textContent = ns; pop($('#dtSetsVal'));
+    const mc = sheet.querySelector('.metachip'); if (mc) mc.textContent = exMeta(e);
+    renderDay(); renderHome();
+  };
+  const dn0 = $('#dtSetsDn'), up0 = $('#dtSetsUp');
+  if (dn0) dn0.addEventListener('click', () => changeSets(x => Math.max(1, x - 1)));
+  if (up0) up0.addEventListener('click', () => changeSets(x => Math.min(20, x + 1)));
   if ($('#dtAlt')) $('#dtAlt').addEventListener('click', () => { swapAlt(idx); openDetail(idx); });
+  if ($('#dtAltDel')) $('#dtAltDel').addEventListener('click', () => {
+    e.alt = null; save(); renderHome();
+    openDetail(idx); toast('已移除替换动作');
+  });
+  $('#dtRec').addEventListener('click', () => { closeSheet(); openRecordSheet(idx); });
+  const tt = $('#dtTimer'); if (tt) tt.addEventListener('click', () => timeTimerFor(e));
   $('#dtEdit').addEventListener('click', () => openForm(idx));
   $('#dtDel').addEventListener('click', () => {
     if (!confirm('确定从 ' + DAY_NAMES[curDay] + ' 移除「' + e.name + '」？')) return;
@@ -830,11 +1036,15 @@ function openLibrary() {
 }
 
 /* ---------- 添加 / 编辑表单 ---------- */
-function openForm(editIdx, preset) {
+let fAltSel = null, fFormEdit = null, fFormPreset = null;
+function openForm(editIdx, preset, keepAlt) {
+  if (!keepAlt) fAltSel = null;
+  fFormEdit = editIdx; fFormPreset = preset;
   const day = state.plan[curDay];
   const e = editIdx != null ? day.ex[editIdx] : Object.assign(
     { sets: 3, setsMax: 0, num: 12, numMax: 0, unit: '个', note: '', rest: 0, load: '', goal: '', perSide: false, alt: null }, preset);
   const lib = LIB[e.lib];
+  const curAlt = fAltSel ? (fAltSel.none ? null : fAltSel) : (e.alt || null);
   let rest = e.rest || 0;
   let sets = e.sets, num = e.num, unit = e.unit, perSide = !!e.perSide;
   openSheet(
@@ -842,34 +1052,64 @@ function openForm(editIdx, preset) {
     (lib ? '<div class="sheet-fig sm" id="formFig"></div>' : '') +
     '<label class="flabel">动作名称</label>' +
     '<input id="fName" class="finput" value="' + esc(e.name) + '" maxlength="20" placeholder="例如：保加利亚分腿蹲">' +
-    '<label class="flabel">组数 / 每组次数</label>' +
-    '<div class="rowline"><div class="stepper"><button id="fSetsDn">−</button><b id="fSetsVal">' + sets + '</b><button id="fSetsUp">＋</button></div>' +
-    '<input id="fNum" class="finput num" type="number" inputmode="numeric" min="1" max="999" value="' + num + '">' +
-    '<div class="seg" id="fUnit">' + UNITS.map(u => '<button class="' + (u === unit ? 'on' : '') + '" data-u="' + u + '">' + u + '</button>').join('') + '</div></div>' +
-    '<div class="rowline note2"><input id="fNumMax" class="finput num" type="number" inputmode="numeric" min="0" max="999" value="' + (e.numMax || '') + '" placeholder="上限（可选）">' +
-    '<input id="fSetsMax" class="finput num" type="number" inputmode="numeric" min="0" max="20" value="' + (e.setsMax || '') + '" placeholder="组数上限（可选）">' +
-    '<button class="bigbtn ghost slimbtn' + (perSide ? ' on' : '') + '" id="fPerSide">每边分别做</button></div>' +
+    '<label class="flabel">组数</label>' +
+    '<div class="stepper"><button id="fSetsDn">−</button><b id="fSetsVal">' + sets + '</b><button id="fSetsUp">＋</button></div>' +
+    '<label class="flabel">每组次数 / 时长</label>' +
+    '<div class="rowline center"><input id="fNum" class="finput num" type="number" inputmode="numeric" min="1" max="999" value="' + num + '">' +
+    '<div class="seg" id="fUnit">' + UNITS.map(u => '<button class="' + (u === unit ? 'on' : '') + '" data-u="' + u + '">' + (u === '分钟' ? '分' : u) + '</button>').join('') + '</div></div>' +
+    '<div class="rowline two"><input id="fNumMax" class="finput num" type="number" inputmode="numeric" min="0" max="999" value="' + (e.numMax || '') + '" placeholder="次数上限（可选）">' +
+    '<input id="fSetsMax" class="finput num" type="number" inputmode="numeric" min="0" max="20" value="' + (e.setsMax || '') + '" placeholder="组数上限（可选）"></div>' +
+    '<div class="rowline center gap"><button class="bigbtn ghost slimbtn' + (perSide ? ' on' : '') + '" id="fPerSide">每边分别做</button></div>' +
     '<label class="flabel" id="fRestLabel">组间间歇 ' + (rest ? fmtRest(rest) : '未设置') + '</label>' +
-    '<div class="stepper wide"><button id="fRestDn">−</button><b id="fRestVal">' + (rest || '—') + '</b><button id="fRestUp">＋</button></div>' +
+    '<div class="stepper"><button id="fRestDn">−</button><b id="fRestVal">' + (rest || '—') + '</b><button id="fRestUp">＋</button></div>' +
     '<label class="flabel">负荷（可选）</label>' +
     '<input id="fLoad" class="finput" value="' + esc(e.load) + '" maxlength="20" placeholder="例如：中等重量 / 8kg壶铃">' +
     '<label class="flabel">训练目标（可选）</label>' +
     '<input id="fGoal" class="finput" value="' + esc(e.goal) + '" maxlength="20" placeholder="例如：下肢爆发力">' +
+    '<label class="flabel">替换动作（二选一，卡片上一键切换）</label>' +
+    '<div class="altpick"><div class="altpickinfo"><b>' + (curAlt ? esc(curAlt.name) : '未设置') + '</b><span class="sub">' + (curAlt ? '当前替换为上方动作' : '点右侧选择') + '</span></div>' +
+    '<button class="bigbtn ghost slimbtn" id="fAltBtn">' + (curAlt ? '更改' : '选择') + '</button></div>' +
     '<label class="flabel">备注（可选）</label>' +
     '<textarea id="fNote" class="finput area" rows="2" maxlength="120" placeholder="例如：质量优先，动作变形立即降组">' + esc(e.note) + '</textarea>' +
     '<div class="btnrow"><button class="bigbtn ghost" id="fCancel">取消</button><button class="bigbtn" id="fSave">保存</button></div>' +
     (editIdx != null ? '<div class="btnrow"><button class="bigbtn danger wide" id="fDel">删除此动作</button></div>' : ''));
 
   if (lib) $('#formFig').appendChild(fig(e.lib, 130, true));
-  $('#fSetsDn').addEventListener('click', () => { sets = Math.max(1, sets - 1); $('#fSetsVal').textContent = sets; });
-  $('#fSetsUp').addEventListener('click', () => { sets = Math.min(20, sets + 1); $('#fSetsVal').textContent = sets; });
-  $('#fRestDn').addEventListener('click', () => { rest = Math.max(0, rest - 15); $('#fRestVal').textContent = rest || '—'; $('#fRestLabel').textContent = '组间间歇 ' + (rest ? fmtRest(rest) : '未设置'); });
-  $('#fRestUp').addEventListener('click', () => { rest = Math.min(600, rest + 15); $('#fRestVal').textContent = rest; $('#fRestLabel').textContent = '组间间歇 ' + (rest ? fmtRest(rest) : '未设置'); });
+  $('#fSetsDn').addEventListener('click', () => { sets = Math.max(1, sets - 1); $('#fSetsVal').textContent = sets; pop($('#fSetsVal')); });
+  $('#fSetsUp').addEventListener('click', () => { sets = Math.min(20, sets + 1); $('#fSetsVal').textContent = sets; pop($('#fSetsVal')); });
+  $('#fRestDn').addEventListener('click', () => { rest = Math.max(0, rest - 15); $('#fRestVal').textContent = rest || '—'; $('#fRestLabel').textContent = '组间间歇 ' + (rest ? fmtRest(rest) : '未设置'); pop($('#fRestVal')); });
+  $('#fRestUp').addEventListener('click', () => { rest = Math.min(600, rest + 15); $('#fRestVal').textContent = rest; $('#fRestLabel').textContent = '组间间歇 ' + (rest ? fmtRest(rest) : '未设置'); pop($('#fRestVal')); });
   sheet.querySelectorAll('#fUnit button').forEach(b => b.addEventListener('click', () => {
     unit = b.dataset.u;
     sheet.querySelectorAll('#fUnit button').forEach(x => x.classList.toggle('on', x === b));
+    pop(b);
   }));
+  (function bindNumScroll() {
+    const fNumEl = $('#fNum');
+    if (!fNumEl) return;
+    fNumEl.setAttribute('readonly', 'readonly');
+    let touchY = null, acc = 0;
+    const nudge = dir => {
+      if (unit === '秒') {
+        num = dir > 0 ? (Math.floor(num / 5) + 1) * 5 : Math.max(5, (Math.ceil(num / 5) - 1) * 5);
+      } else {
+        num = Math.max(1, Math.min(999, num + dir));
+      }
+      fNumEl.value = num; pop(fNumEl);
+    };
+    fNumEl.addEventListener('wheel', e => { e.preventDefault(); nudge(e.deltaY < 0 ? 1 : -1); }, { passive: false });
+    fNumEl.addEventListener('touchstart', e => { touchY = e.touches[0].clientY; acc = 0; }, { passive: true });
+    fNumEl.addEventListener('touchmove', e => {
+      e.preventDefault();
+      acc += touchY - e.touches[0].clientY; touchY = e.touches[0].clientY;
+      while (acc >= 20) { acc -= 20; nudge(1); }
+      while (acc <= -20) { acc += 20; nudge(-1); }
+    }, { passive: false });
+    fNumEl.addEventListener('dblclick', () => { fNumEl.removeAttribute('readonly'); fNumEl.focus(); });
+    fNumEl.addEventListener('blur', () => { num = Math.max(1, Math.min(999, parseInt(fNumEl.value, 10) || 1)); fNumEl.value = num; fNumEl.setAttribute('readonly', 'readonly'); });
+  })();
   $('#fPerSide').addEventListener('click', () => { perSide = !perSide; $('#fPerSide').classList.toggle('on', perSide); });
+  $('#fAltBtn').addEventListener('click', openAltPicker);
   $('#fCancel').addEventListener('click', closeSheet);
   $('#fSave').addEventListener('click', () => {
     const name = $('#fName').value.trim() || (lib ? lib.name : '自定义动作');
@@ -877,7 +1117,8 @@ function openForm(editIdx, preset) {
     const data = {
       lib: e.lib, name, sets, setsMax: parseInt($('#fSetsMax').value, 10) || 0,
       num: num2, numMax: parseInt($('#fNumMax').value, 10) || 0, unit, perSide,
-      rest, load: $('#fLoad').value.trim(), goal: $('#fGoal').value.trim(), note: $('#fNote').value.trim(), alt: e.alt || null,
+      rest, load: $('#fLoad').value.trim(), goal: $('#fGoal').value.trim(), note: $('#fNote').value.trim(),
+      alt: curAlt ? { lib: curAlt.lib, name: curAlt.name } : null,
     };
     if (editIdx != null) Object.assign(day.ex[editIdx], data);
     else day.ex.push(Object.assign({ uid: uid() }, data));
@@ -889,6 +1130,38 @@ function openForm(editIdx, preset) {
     day.ex.splice(editIdx, 1);
     save(); closeSheet(); renderDay(); renderHome();
   });
+}
+
+/* 替换动作选择器 */
+function openAltPicker() {
+  const groups = {};
+  const keys = Object.keys(LIB).filter(k => k !== 'idle');
+  for (const k of keys) { const c = LIB[k].cat || '其他'; (groups[c] = groups[c] || []).push(k); }
+  let html = '<div class="sheet-title">选择替换动作</div>' +
+    '<button class="bigbtn ghost slimbtn wide" id="altNone">清除替换</button><div class="liblist">';
+  for (const cat of LIB_ORDER) {
+    if (!groups[cat]) continue;
+    html += '<div class="libgroup">' + cat + '</div>';
+    for (const k of groups[cat]) {
+      html += '<div class="librow" data-k="' + k + '"><div class="figbox sm" data-fig="' + k + '"></div>' +
+        '<div><div class="libname">' + esc(LIB[k].name) + '</div></div>' +
+        '<svg class="chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></div>';
+    }
+    delete groups[cat];
+  }
+  for (const c in groups) {
+    html += '<div class="libgroup">' + c + '</div>';
+    for (const k of groups[c]) html += '<div class="librow" data-k="' + k + '"><div><div class="libname">' + esc(LIB[k].name) + '</div></div></div>';
+  }
+  html += '</div>';
+  openSheet(html);
+  sheet.querySelectorAll('.figbox').forEach(b => b.appendChild(fig(b.dataset.fig, 54, false)));
+  sheet.querySelectorAll('.librow').forEach(r => r.addEventListener('click', () => pickAlt(r.dataset.k)));
+  $('#altNone').addEventListener('click', () => pickAlt(''));
+}
+function pickAlt(k) {
+  fAltSel = k === '' ? { none: 1 } : { lib: k, name: LIB[k].name };
+  openForm(fFormEdit, fFormPreset, true);
 }
 
 /* ---------- 设置 ---------- */
@@ -904,10 +1177,22 @@ function openSettings() {
     '<label class="flabel">按键不透明度</label>' +
     '<div class="oprow"><input type="range" id="opRange" min="40" max="100" step="1" value="' + op + '">' +
     '<span class="opval" id="opVal">' + op + '%</span></div>' +
-    '<div class="setcard"><b>数据保存在本机浏览器中</b><p class="dim">记录保存在这台 iPhone 的本地存储里，换浏览器或清除网站数据会丢失，建议定期导出备份。</p></div>' +
+    (function () {
+      const hasTok = !!syncToken();
+      return '<div class="setcard synccard">' +
+        '<b>云端同步</b><p class="dim">计划保存在 GitHub 仓库中。管理员点「发布」，其他人点「拉取」即可看到最新计划；各自打卡互不影响。</p>' +
+        '<div class="btnrow"><button class="bigbtn ghost" id="stPull">⬇️ 拉取最新计划</button>' + (hasTok ? '<button class="bigbtn" id="stPush">⬆️ 发布计划</button>' : '') + '</div>' +
+        '<p class="dim small" style="margin:10px 2px 0">' + esc(lastSyncText()) + '</p>' +
+        '<details class="subcard"><summary>发布者设置（仅管理员）</summary>' +
+          '<input id="stTok" class="finput" style="margin-top:10px" type="password" autocomplete="off" placeholder="粘贴 GitHub Token，仅存于本机" value="' + esc(syncToken()) + '">' +
+          '<div class="btnrow"><button class="bigbtn ghost slimbtn" id="stTokSave">保存</button><button class="bigbtn danger slimbtn" id="stTokClear">清除</button></div>' +
+        '</details>' +
+      '</div>';
+    })() +
+    '<div class="setcard"><b>数据保存在本机浏览器中</b><p class="dim">打卡记录保存在这台设备的浏览器里，不上传云端、不随计划同步；换设备或清除网站数据会丢失，建议定期导出备份。</p></div>' +
     '<div class="btnrow"><button class="bigbtn ghost" id="stExport">导出备份</button><button class="bigbtn ghost" id="stImport">导入备份</button></div>' +
     '<div class="btnrow"><button class="bigbtn ghost" id="stSample">恢复示例计划</button><button class="bigbtn danger" id="stClear">清空全部数据</button></div>' +
-    '<div class="setcard dim small">健身周计划 v3.0 · 3D 动作演示 · 组内计时 · 自由计时器</div>');
+    '<div class="setcard dim small">健身周计划 v6 · 云端同步 · 快速打卡</div>');
   sheet.querySelectorAll('#thSeg button').forEach(b => b.addEventListener('click', () => {
     const t = b.dataset.th;
     localStorage.setItem(THEME_KEY, t);
@@ -928,6 +1213,20 @@ function openSettings() {
     range.addEventListener('change', () => { localStorage.setItem(OP_KEY, range.value); });
     paint();
   })();
+  $('#stPull').addEventListener('click', pullPlan);
+  if ($('#stPush')) $('#stPush').addEventListener('click', pushPlan);
+  $('#stTokSave').addEventListener('click', () => {
+    const v = $('#stTok').value.trim();
+    if (v) localStorage.setItem(SYNC_TOKEN_KEY, v);
+    else localStorage.removeItem(SYNC_TOKEN_KEY);
+    toast(v ? 'Token 已保存（仅存于本机）' : '已清除 Token');
+    openSettings();
+  });
+  $('#stTokClear').addEventListener('click', () => {
+    localStorage.removeItem(SYNC_TOKEN_KEY);
+    openSettings();
+    toast('Token 已清除');
+  });
   $('#stExport').addEventListener('click', () => {
     const txt = JSON.stringify({ plan: state.plan, log: state.log });
     openSheet('<div class="sheet-title">导出备份</div>' +
@@ -997,8 +1296,54 @@ applyTheme(getTheme());
 /* ---------- 按键不透明度 ---------- */
 const OP_KEY = 'fit-btn-op';
 function getBtnOp() { const v = parseInt(localStorage.getItem(OP_KEY) || '100', 10); return isNaN(v) ? 100 : Math.min(100, Math.max(40, v)); }
-function applyBtnOp(v) { document.body.style.setProperty('--btn-op', v / 100); }
+function applyBtnOp(v) {
+  const a = v / 100;
+  document.body.style.setProperty('--btn-op', a.toFixed(2));
+  document.body.style.setProperty('--btn-blur', Math.round((1 - a) * 18) + 'px');
+}
 applyBtnOp(getBtnOp());
+
+/* ---------- 云端同步（方案一：GitHub 仓库 plan.json） ---------- */
+const SYNC_TOKEN_KEY = 'fit-sync-token';
+const SYNC_AT_KEY = 'fit-sync-at';
+const REPO = { u: 'miles616-morales', r: 'fitness-planner' };
+const syncToken = () => localStorage.getItem(SYNC_TOKEN_KEY) || '';
+const b64u = s => btoa(unescape(encodeURIComponent(s)));
+/* 每组快速记录：记住上次该动作的重量/次数/余力，下次自动带出 */
+const getLastData = uid => { try { return JSON.parse(localStorage.getItem('fit-last-' + uid) || '{}') || {}; } catch (e) { return {}; } };
+const setLastData = (uid, d) => localStorage.setItem('fit-last-' + uid, JSON.stringify(d));
+function validPlan(p) { try { return Array.isArray(p) && p.length === 7 && p.every(d => d && Array.isArray(d.ex)); } catch (e) { return false; } }
+function lastSyncText() { const t = parseInt(localStorage.getItem(SYNC_AT_KEY) || '0', 10); return t ? '上次同步：' + new Date(t).toLocaleString() : '本机尚未同步过'; }
+function applyPlan(p) { state.plan = p; save(); localStorage.setItem(SYNC_AT_KEY, Date.now()); }
+async function pullPlan() {
+  if (!confirm('拉取云端计划会覆盖本机的计划安排（你的打卡记录会保留）。继续？')) return;
+  try {
+    const res = await fetch('plan.json?t=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) { toast('云端还没有人发布过计划'); return; }
+    const d = await res.json();
+    if (!validPlan(d.plan)) { toast('云端数据格式不正确'); return; }
+    applyPlan(d.plan);
+    renderHome(); if ($('#day').classList.contains('open')) renderDay();
+    closeSheet();
+    toast('已同步最新计划 · 打卡记录已保留');
+  } catch (e) { toast('同步失败，请检查网络后重试'); }
+}
+async function pushPlan() {
+  const tok = syncToken();
+  if (!tok) { toast('请先在「发布者设置」填入 GitHub Token'); return; }
+  const api = 'https://api.github.com/repos/' + REPO.u + '/' + REPO.r + '/contents/plan.json';
+  try {
+    let sha = null;
+    const g = await fetch(api, { headers: { Authorization: 'Bearer ' + tok, Accept: 'application/vnd.github+json' } });
+    if (g.ok) { const gd = await g.json(); sha = gd.sha; }
+    else if (g.status !== 404) { const ge = await g.json().catch(() => ({})); toast(ge.message === 'Bad credentials' ? 'Token 无效' : 'Token 无权限（需本仓库写入权限）'); return; }
+    const payload = { message: 'sync plan', content: b64u(JSON.stringify({ plan: state.plan, publishedAt: Date.now() })) };
+    if (sha) payload.sha = sha;
+    const res = await fetch(api, { method: 'PUT', headers: { Authorization: 'Bearer ' + tok, Accept: 'application/vnd.github+json', 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (res.ok) { localStorage.setItem(SYNC_AT_KEY, Date.now()); closeSheet(); toast('已发布到云端 ✓ 他人点「拉取」即可看到'); }
+    else { const re = await res.json().catch(() => ({})); toast(re.message === 'Bad credentials' ? 'Token 无效' : '发布失败（检查网络或权限）'); }
+  } catch (e) { toast('发布失败：网络问题'); }
+}
 
 /* ---------- 启动 ---------- */
 renderHome();
