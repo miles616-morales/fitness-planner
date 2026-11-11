@@ -1,5 +1,5 @@
 /* 健身周计划 · 离线缓存 */
-const CACHE = 'fitplan-v5';
+const CACHE = 'fitplan-v6';
 const ASSETS = [
   './',
   './index.html',
@@ -23,6 +23,12 @@ self.addEventListener('activate', e => {
 
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
+  // 云端计划文件永远走网络，不用缓存
+  const url = new URL(e.request.url);
+  if (url.pathname.endsWith('/plan.json')) {
+    e.respondWith(fetch(e.request));
+    return;
+  }
   e.respondWith(
     caches.match(e.request, { ignoreSearch: true }).then(hit =>
       hit || fetch(e.request).then(res => {
